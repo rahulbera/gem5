@@ -512,6 +512,17 @@ def config_embedded_python(env):
         is_useful = lambda x: any(x.startswith(prefix) for prefix in prefixes)
         useful_flags = list(filter(is_useful, flags))
         env.MergeFlags(' '.join(useful_flags))
+        # Embed each Python library directory as an rpath so the embedded
+        # interpreter's libpython is found at run time without LD_LIBRARY_PATH.
+        # On hosts where Python lives in an Anaconda/conda prefix, the
+        # co-located libprotobuf/abseil are covered by the same rpath. This
+        # matters on batch/cluster nodes (e.g. Slurm) where ~/.bashrc isn't
+        # sourced and the prefix's lib dir isn't on the default loader path.
+        for flag in useful_flags:
+            if flag.startswith('-L'):
+                libdir = flag[2:]
+                if libdir:
+                    env.Append(LINKFLAGS=['-Wl,-rpath,' + libdir])
 
     env.ParseConfig(cmd, flag_filter)
 

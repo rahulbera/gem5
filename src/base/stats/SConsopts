@@ -25,6 +25,8 @@
 
 Import('*')
 
+import os
+
 from gem5_scons import warning
 import gem5_scons
 
@@ -32,22 +34,32 @@ with gem5_scons.Configure(main) as conf:
     # Check if there is a pkg-config configuration for hdf5. If we find
     # it, setup the environment to enable linking and header inclusion. We
     # don't actually try to include any headers or link with hdf5 at this
-    # stage.
+    # stage. (Kept unconditionally so toggling HDF5 below is a scoped relink
+    # rather than a full rebuild.)
     if conf.env['HAVE_PKG_CONFIG']:
         conf.CheckPkgConfig(['hdf5-serial', 'hdf5'],
                 '--cflags-only-I', '--libs-only-L')
 
-    # Check if the HDF5 libraries can be found. This check respects the
-    # include path and library path provided by pkg-config. We perform
-    # this check even if there isn't a pkg-config configuration for hdf5
-    # since some installations don't use pkg-config.
-    conf.env['CONF']['HAVE_HDF5'] = \
-            conf.CheckLibWithHeader('hdf5', 'hdf5.h', 'C',
-                                    call='H5Fcreate("", 0, 0, 0);') and \
-            conf.CheckLibWithHeader('hdf5_cpp', 'H5Cpp.h', 'C++',
-                                    call='H5::H5File("", 0);')
+    # HDF5 is an optional stats-output format that we don't use. It is
+    # disabled by default in this fork: building with the Anaconda toolchain
+    # puts ~/anaconda3/lib on the link line (for the embedded libpython), and
+    # Anaconda's libhdf5_cpp shadows the system one that hdf5.cc is compiled
+    # against, causing undefined-symbol link errors. Set GEM5_ENABLE_HDF5=1 to
+    # restore auto-detection on a host with a consistent HDF5 installation.
+    if os.environ.get('GEM5_ENABLE_HDF5'):
+        # This check respects the include/library path provided by pkg-config,
+        # and works even without a pkg-config configuration for hdf5 since some
+        # installations don't use pkg-config.
+        conf.env['CONF']['HAVE_HDF5'] = \
+                conf.CheckLibWithHeader('hdf5', 'hdf5.h', 'C',
+                                        call='H5Fcreate("", 0, 0, 0);') and \
+                conf.CheckLibWithHeader('hdf5_cpp', 'H5Cpp.h', 'C++',
+                                        call='H5::H5File("", 0);')
+    else:
+        conf.env['CONF']['HAVE_HDF5'] = False
 
     if conf.env['CONF']['HAVE_HDF5']:
         conf.env.TagImplies('hdf5', 'gem5 lib')
     else:
-        warning("Couldn't find HDF5 C++ libraries. Disabling HDF5 support.")
+        warning("HDF5 support disabled "
+                "(set GEM5_ENABLE_HDF5=1 to re-enable auto-detection).")

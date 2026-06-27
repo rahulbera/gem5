@@ -194,3 +194,7 @@ gem5; **FS** (full system, `set_kernel_disk_workload(...)`) boots a real kernel 
 `site_scons/` (SCons infra) · `configs/` (example config scripts) · `tests/` (regressions; framework in
 `ext/testlib/`) · `ext/` (bundled third-party) · `util/` (tooling: `m5` guest util, trace decoders,
 checkpoint upgraders, clang-format/commit hooks) · `system/` (firmware sources).
+
+**Run scripts:** put run/launch scripts and the configs used for runs in `runs/` (gitignored) so
+they can be vetted and run manually — keep them out of the tracked tree. Use `/tmp` only for
+throwaway build artifacts.

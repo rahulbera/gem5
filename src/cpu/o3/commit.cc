@@ -46,6 +46,7 @@
 #include <string>
 
 #include "base/compiler.hh"
+#include "base/cprintf.hh"
 #include "base/loader/symtab.hh"
 #include "base/logging.hh"
 #include "cpu/base.hh"
@@ -65,6 +66,7 @@
 #include "params/BaseO3CPU.hh"
 #include "sim/faults.hh"
 #include "sim/full_system.hh"
+#include "sim/sim_exit.hh"
 
 namespace gem5
 {
@@ -114,6 +116,7 @@ Commit::Commit(CPU *_cpu, const BaseO3CPUParams &params)
       drainPending(false),
       drainImminent(false),
       trapLatency(params.trapLatency),
+      commitStallLimit(params.commitStallLimit),
       canHandleInterrupts(true),
       avoidQuiesceLiveLock(false),
       stats(_cpu, this)
@@ -142,6 +145,8 @@ Commit::Commit(CPU *_cpu, const BaseO3CPUParams &params)
         pc[tid].reset(params.isa[0]->newPCState());
         youngestSeqNum[tid] = 0;
         lastCommitedSeqNum[tid] = 0;
+        prevCommittedSn[tid] = 0;
+        noProgressCycles[tid] = 0;
         trapInFlight[tid] = false;
         committedStores[tid] = false;
         checkEmptyROB[tid] = false;
@@ -663,6 +668,131 @@ Commit::tick()
     }
 
     updateStatus();
+
+    checkForwardProgress();
+}
+
+void
+Commit::checkForwardProgress()
+{
+    if ((uint64_t)commitStallLimit == 0) {
+        return; // detector disabled
+    }
+
+    for (ThreadID tid : *activeThreads) {
+        if (lastCommitedSeqNum[tid] != prevCommittedSn[tid]) {
+            // An instruction committed since last cycle -> progress.
+            prevCommittedSn[tid] = lastCommitedSeqNum[tid];
+            noProgressCycles[tid] = 0;
+            continue;
+        }
+        if (++noProgressCycles[tid] < (uint64_t)commitStallLimit) {
+            continue;
+        }
+
+        // No forward progress for commitStallLimit cycles.
+        if (!rob->isEmpty(tid)) {
+            // ROB-head deadlock: the head is the oldest uncommitted inst.
+            const DynInstPtr &head = rob->readHeadInst(tid);
+            dumpRobHeadDeadlock(tid, head);
+            exitSimLoopNow(
+                csprintf("O3 ROB-head deadlock (cpu=%s tid=%d sn=%llu)",
+                         cpu->name(), tid, head->seqNum),
+                1);
+            return;
+        } else {
+            // Empty ROB: front-end starvation. Deferred (spec section 6).
+            handleFrontEndStall(tid);
+        }
+    }
+}
+
+void
+Commit::dumpRobHeadDeadlock(ThreadID tid, const DynInstPtr &head)
+{
+    const StaticInstPtr &si = head->staticInst;
+    Addr addr = head->pcState().instAddr();
+    const char *fault_name =
+        (head->getFault() == NoFault) ? "NoFault" : head->getFault()->name();
+
+    cprintf("\n=========== O3 NO-FORWARD-PROGRESS DEADLOCK ===========\n");
+    cprintf("  cpu: %s   tick: %llu   tid: %d\n", cpu->name(), curTick(), tid);
+    cprintf("  no commit for %llu cyc (commitStallLimit=%llu)   "
+            "ROB: %d   commitStatus: %d\n",
+            noProgressCycles[tid], (uint64_t)commitStallLimit,
+            rob->countInsts(tid), (int)commitStatus[tid]);
+    cprintf("  ROB-head instruction (the blocker):\n");
+    cprintf("    sn:%llu  PC:%#x.%d  opClass:%s\n", head->seqNum, addr,
+            head->pcState().microPC(), enums::OpClassStrings[head->opClass()]);
+    cprintf("    disasm: %s\n", si->disassemble(addr).c_str());
+    cprintf("    status: inROB=%d inIQ=%d inLSQ=%d readyToIssue=%d "
+            "issued=%d executed=%d resultReady=%d readyToCommit=%d "
+            "squashed=%d noCapableFU=%d\n",
+            head->isInROB(), head->isInIQ(), head->isInLSQ(),
+            head->readyToIssue(), head->isIssued(), head->isExecuted(),
+            head->isResultReady(), head->readyToCommit(), head->isSquashed(),
+            head->noCapableFU());
+    cprintf("    fault: %s\n", fault_name);
+    cprintf("    stages(tick): fetch=%lli decode=%d rename=%d dispatch=%d "
+            "issue=%d complete=%d\n",
+            head->fetchTick, head->decodeTick, head->renameTick,
+            head->dispatchTick, head->issueTick, head->completeTick);
+
+    // Heuristic cause hint (says "suspect"/"likely", never "proven").
+    cprintf("    --> ");
+    if (head->getFault() != NoFault) {
+        cprintf("pending fault (%s) not being retired\n", fault_name);
+    } else if (head->isMemRef() && head->isInLSQ()) {
+        if (head->translationStarted() && !head->translationCompleted()) {
+            cprintf("memory op: address translation never completed\n");
+        } else if (!head->isExecuted()) {
+            cprintf("memory op: no memory response (cache/mem never "
+                    "replied)\n");
+        } else {
+            cprintf("memory op: executed, waiting to commit\n");
+        }
+    } else if (!head->isExecuted()) {
+        // Never executed -- the common deadlock. Localize by how far the
+        // instruction got through the pipeline.
+        const char *oc = enums::OpClassStrings[head->opClass()];
+        if (head->dispatchTick == -1) {
+            cprintf("reached rename but was never dispatched to the IQ -> "
+                    "the issue queue is wedged, often because ops of opClass "
+                    "'%s' cannot issue (no functional unit) and pile up; "
+                    "check the FUPool covers '%s'\n",
+                    oc, oc);
+        } else if (head->isInIQ() && head->readyToIssue()) {
+            cprintf("in IQ, operands ready, but never issued -> suspect NO "
+                    "functional unit for opClass '%s' (check the FUPool), "
+                    "or a structural hazard\n",
+                    oc);
+        } else if (head->isInIQ()) {
+            cprintf("in IQ but operands never became ready -> a source "
+                    "operand was never produced; check the dependency "
+                    "chain\n");
+        } else {
+            cprintf("never reached issue (issued=0) -> check FU coverage for "
+                    "opClass '%s' and the dependency chain\n",
+                    oc);
+        }
+    } else if (head->isExecuted() && !head->readyToCommit()) {
+        cprintf("executed but blocked from commit (non-speculative / "
+                "barrier ordering?)\n");
+    } else {
+        cprintf("(no specific hint -- see raw flags above)\n");
+    }
+    cprintf("=======================================================\n\n");
+}
+
+void
+Commit::handleFrontEndStall(ThreadID tid)
+{
+    // v1 stub: a no-progress stall with an EMPTY ROB means the front end
+    // is not delivering instructions (e.g. a wedged decoupled-front-end /
+    // FTQ). Deferred to a fast-follow -- see the design spec section 6,
+    // which adds (a) idle/quiesce guards and (b) a fetch/FTQ diagnostic
+    // here. v1 intentionally takes no action (stays false-positive-free).
+    (void)tid;
 }
 
 void

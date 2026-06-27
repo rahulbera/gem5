@@ -130,6 +130,11 @@ class BaseO3CPU(BaseCPU):
         "squashed instantly within one cycle.",
     )
     trapLatency = Param.Cycles(13, "Trap latency")
+    commitStallLimit = Param.Cycles(
+        1000000,
+        "Max cycles with no committed instruction before the run is "
+        "declared deadlocked and stopped (0 disables the check)",
+    )
     fetchTrapLatency = Param.Cycles(1, "Fetch trap latency")
 
     backComSize = Param.Unsigned(

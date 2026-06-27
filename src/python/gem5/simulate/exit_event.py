@@ -118,6 +118,13 @@ class ExitEvent(Enum):
             return ExitEvent.EXIT
         elif exit_string.endswith("received all expected responses."):
             return ExitEvent.SPATTER_EXIT
+        elif exit_string.startswith("O3 ROB-head deadlock"):
+            # Raised by the O3 commit-stage no-forward-progress detector
+            # (src/cpu/o3/commit.cc) when the ROB head stalls past
+            # commitStallLimit cycles. Categorized as a normal exit so run()
+            # returns cleanly; the deadlock nature is in the cause string and
+            # the non-zero exit code.
+            return ExitEvent.EXIT
         raise NotImplementedError(
             f"Exit event '{exit_string}' not implemented"
         )

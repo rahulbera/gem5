@@ -206,6 +206,18 @@ class Commit
     /** Ticks the commit stage, which tries to commit instructions. */
     void tick();
 
+    /** Once-per-cycle no-forward-progress check. If the committed
+     *  instruction stream stalls for commitStallLimit cycles, declare a
+     *  deadlock, dump diagnostics, and stop the simulation. */
+    void checkForwardProgress();
+
+    /** Dump diagnostics for the instruction blocking the ROB head. */
+    void dumpRobHeadDeadlock(ThreadID tid, const DynInstPtr &head);
+
+    /** Handle a no-progress stall with an empty ROB (front-end
+     *  starvation). v1 stub -- deferred; see design spec section 6. */
+    void handleFrontEndStall(ThreadID tid);
+
     /** Handles any squashes that are sent from IEW, and adds instructions
      * to the ROB and tries to commit instructions.
      */
@@ -416,6 +428,11 @@ class Commit
      */
     const Cycles trapLatency;
 
+    /** Cycle limit for the no-forward-progress (deadlock) check; 0
+     *  disables it. Declared here, right after trapLatency, so the
+     *  constructor init-list order matches declaration order (-Wreorder). */
+    const Cycles commitStallLimit;
+
     /** The interrupt fault. */
     Fault interrupt;
 
@@ -429,6 +446,14 @@ class Commit
 
     /** The sequence number of the last commited instruction. */
     InstSeqNum lastCommitedSeqNum[MaxThreads];
+
+    /** Per-thread value of lastCommitedSeqNum seen on the previous cycle
+     *  by checkForwardProgress(). */
+    InstSeqNum prevCommittedSn[MaxThreads];
+
+    /** Per-thread count of consecutive cycles with no committed
+     *  instruction. */
+    uint64_t noProgressCycles[MaxThreads];
 
     /** Records if there is a trap currently in flight. */
     bool trapInFlight[MaxThreads];

@@ -48,6 +48,7 @@
 #include "arch/generic/interrupts.hh"
 #include "arch/generic/mmu.hh"
 #include "base/statistics.hh"
+#include "base/time.hh"
 #include "debug/Mwait.hh"
 #include "dev/intpin.hh"
 #include "mem/htm.hh"
@@ -89,6 +90,9 @@ class CPUProgressEvent : public Event
     Counter lastNumInst;
     BaseCPU *cpu;
     bool _repeatEvent;
+
+    /** Wall-clock time captured at the previous progress event, for KIPS. */
+    Time lastHostTime;
 
   public:
     CPUProgressEvent(BaseCPU *_cpu, Tick ival = 0);

@@ -152,6 +152,12 @@ def parse_args():
         action="store_true",
         help="Disable the L2 BOP prefetcher.",
     )
+    parser.add_argument(
+        "--progress-interval",
+        type=str,
+        default="0Hz",
+        help="CPU progress-heartbeat frequency (e.g. 1kHz); 0Hz disables.",
+    )
     return parser.parse_args()
 
 
@@ -178,6 +184,7 @@ for core in processor.get_cores():
         cpu.decoupledFrontEnd = False
     if args.max_insts > 0:
         cpu.max_insts_any_thread = args.max_insts
+    cpu.progress_interval = args.progress_interval
 
 board = SimpleBoard(
     clk_freq=args.clk_freq,

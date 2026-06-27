@@ -89,6 +89,7 @@ CPUProgressEvent::CPUProgressEvent(BaseCPU *_cpu, Tick ival)
     : Event(Event::Progress_Event_Pri), _interval(ival), lastNumInst(0),
       cpu(_cpu), _repeatEvent(true)
 {
+    lastHostTime.setTimer();
     if (_interval)
         cpu->schedule(this, curTick() + _interval);
 }
@@ -105,18 +106,25 @@ CPUProgressEvent::process()
         return;
     }
 
-#ifndef NDEBUG
-    double ipc = double(temp - lastNumInst) / (_interval / cpu->clockPeriod());
+    Counter delta = temp - lastNumInst;
 
-    DPRINTFN("%s progress event, total committed:%i, progress insts committed: "
-             "%lli, IPC: %0.8d\n", cpu->name(), temp, temp - lastNumInst,
-             ipc);
-    ipc = 0.0;
-#else
-    cprintf("%lli: %s progress event, total committed:%i, progress insts "
-            "committed: %lli\n", curTick(), cpu->name(), temp,
-            temp - lastNumInst);
-#endif
+    // Interval IPC: instructions committed this interval / cycles this
+    // interval (_interval ticks / clockPeriod ticks-per-cycle).
+    double cycles = (double)_interval / cpu->clockPeriod();
+    double ipc = (cycles > 0.0) ? ((double)delta / cycles) : 0.0;
+
+    // Host (wall-clock) rate: simulated instructions this interval per real
+    // second, in KIPS -- the clearest "is the sim live, how fast" signal.
+    Time now;
+    now.setTimer();
+    double host_dt = (double)now - (double)lastHostTime;
+    double kips = (host_dt > 0.0) ? ((double)delta / host_dt / 1000.0) : 0.0;
+    lastHostTime = now;
+
+    cprintf("%llu: %s progress: total committed %lli, +%lli since last, "
+            "IPC %.3f, host %.1f KIPS\n",
+            curTick(), cpu->name(), temp, delta, ipc, kips);
+
     lastNumInst = temp;
 }
 

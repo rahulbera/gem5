@@ -106,6 +106,45 @@ class NeoverseV2_FP(FUDesc):
         # and even x/2^k all emit fmadd). Upstream neoverse_v2.py omits it.
         OpDesc(opClass="FloatMultAcc", opLat=4),
         OpDesc(opClass="FloatMisc", opLat=4),
+        # --- Op-class coverage audit ------------------------------------
+        # AArch64 ops the upstream opList omitted; with no FU, each would
+        # stall the O3 pipeline exactly like FloatMultAcc did. Latencies
+        # are approximate. RISC-V-vector and SME (Matrix*) op classes are
+        # intentionally excluded -- they are not emitted by AArch64.
+        # NEON/SVE integer & FP reductions (addv, faddv, ...):
+        OpDesc(opClass="SimdReduceAdd", opLat=4),
+        OpDesc(opClass="SimdReduceAlu", opLat=4),
+        OpDesc(opClass="SimdReduceCmp", opLat=4),
+        OpDesc(opClass="SimdFloatReduceAdd", opLat=4),
+        OpDesc(opClass="SimdFloatReduceCmp", opLat=4),
+        # Dot product, vector extract, SVE int divide, SVE predicate:
+        OpDesc(opClass="SimdDotProd", opLat=4),
+        OpDesc(opClass="SimdExt", opLat=3),
+        OpDesc(opClass="SimdFloatExt", opLat=3),
+        OpDesc(opClass="SimdDiv", opLat=12, pipelined=False),
+        OpDesc(opClass="SimdPredAlu", opLat=2),
+        # BFloat16 (Armv8.6) -- matches the O3_ARM_v7a reference:
+        OpDesc(opClass="Bf16Cvt", opLat=3),
+        OpDesc(opClass="SimdBf16Add", opLat=4),
+        OpDesc(opClass="SimdBf16Cmp", opLat=3),
+        OpDesc(opClass="SimdBf16Cvt", opLat=3),
+        OpDesc(opClass="SimdBf16Mult", opLat=5),
+        OpDesc(opClass="SimdBf16MultAcc", opLat=5),
+        OpDesc(opClass="SimdBf16MatMultAcc", opLat=5),
+        OpDesc(opClass="SimdBf16DotProd", opLat=4),
+        # Crypto extensions (AES / SHA / SM4 / CRC):
+        OpDesc(opClass="SimdAes", opLat=3),
+        OpDesc(opClass="SimdAesMix", opLat=3),
+        OpDesc(opClass="SimdSha1Hash", opLat=4),
+        OpDesc(opClass="SimdSha1Hash2", opLat=4),
+        OpDesc(opClass="SimdSha256Hash", opLat=4),
+        OpDesc(opClass="SimdSha256Hash2", opLat=4),
+        OpDesc(opClass="SimdShaSigma2", opLat=4),
+        OpDesc(opClass="SimdShaSigma3", opLat=4),
+        OpDesc(opClass="SimdSha3", opLat=3),
+        OpDesc(opClass="SimdSm4e", opLat=4),
+        OpDesc(opClass="SimdCrc", opLat=3),
+        # ----------------------------------------------------------------
     ]
 
 
@@ -115,11 +154,18 @@ class Neoverse_V2_FP_FUP(FUPool):
 
 # Load/Store Unit
 class NeoverseV2_Load(FUDesc):
-    opList = [OpDesc(opClass="MemRead", opLat=2)]
+    opList = [
+        OpDesc(opClass="MemRead", opLat=2),
+        OpDesc(opClass="FloatMemRead", opLat=2),
+        OpDesc(opClass="InstPrefetch", opLat=2),
+    ]
 
 
 class NeoverseV2_Store(FUDesc):
-    opList = [OpDesc(opClass="MemWrite", opLat=2)]
+    opList = [
+        OpDesc(opClass="MemWrite", opLat=2),
+        OpDesc(opClass="FloatMemWrite", opLat=2),
+    ]
 
 
 # Load only pool

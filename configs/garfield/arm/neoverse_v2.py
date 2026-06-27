@@ -101,6 +101,10 @@ class NeoverseV2_FP(FUDesc):
         OpDesc(opClass="FloatDiv", opLat=12, pipelined=False),
         OpDesc(opClass="FloatSqrt", opLat=33, pipelined=False),
         OpDesc(opClass="FloatMult", opLat=3),
+        # Scalar fused multiply-add. REQUIRED: with no FU for FloatMultAcc,
+        # any fmadd stalls the O3 pipeline forever (the FFT, libm sin/cos,
+        # and even x/2^k all emit fmadd). Upstream neoverse_v2.py omits it.
+        OpDesc(opClass="FloatMultAcc", opLat=4),
         OpDesc(opClass="FloatMisc", opLat=4),
     ]
 

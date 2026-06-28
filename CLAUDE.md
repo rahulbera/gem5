@@ -6,6 +6,17 @@ gem5 is a modular, event-driven computer-system architecture simulator. The C++ 
 simulated hardware; Python drives configuration and the simulation loop (the gem5 binary embeds a
 CPython interpreter). Understanding the **Python↔C++ boundary** is the key to working here.
 
+## This fork: the Garfield project
+
+This is a private research fork (branch `rbdev`). The active research effort is **Garfield** —
+exploring whether accurately-speculated (noncritical) instructions can be executed *lazily* on a
+cheap in-order backend, freeing the scarce out-of-order resources of a Neoverse V2 core for the
+instructions that actually need them. Before any design work, the idea is gated on a "ghost
+execution" **headroom study**. **Read [`docs/garfield/README.md`](docs/garfield/README.md)** for the
+goal, the core hypothesis, the headroom methodology (assume *predicted = correct*), the three-stage
+plan (branches → memory renaming → value prediction), and the pitfalls — before touching any
+Garfield-related code.
+
 ## Building
 
 gem5 uses **SCons**. Builds are parameterized by a config name that selects ISA(s) and the Ruby

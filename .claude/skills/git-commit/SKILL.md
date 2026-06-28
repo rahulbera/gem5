@@ -35,11 +35,55 @@ Two rules are non-negotiable here:
 2. **Pick the tag(s)** for the components you touched (see the table). Use the
    closest match; `misc` is the catch-all.
 3. **Write the message** in the format below.
-4. **Commit** and let the hooks run — do **not** pass `--no-verify`. A correctly
+4. **Write the commit-note** (cross-clone sharing — see "Commit-notes" below).
+   After the change is staged and the message composed, but *before* committing,
+   drop a one-file note under `docs/commit-notes/` and stage it so it rides in the
+   **same** commit:
+   - `mkdir -p docs/commit-notes`
+   - Name it `docs/commit-notes/<ts>-<slug>.md`, where `ts=$(date +%Y%m%d-%H%M%S)`
+     and `<slug>` is the header summary (text after the tag) lower-cased with each
+     run of non-alphanumerics turned into `-`, trimmed, truncated to ~50 chars.
+   - Fill the template (see "Commit-notes" below): **Goal** and **Summary** from
+     the commit's intent; **Files changed** from `git diff --cached --name-only`
+     (the staged change — the note isn't staged yet, so it won't list itself), one
+     1-2 line descriptor per file.
+   - `git add docs/commit-notes/<ts>-<slug>.md`.
+5. **Commit** and let the hooks run — do **not** pass `--no-verify`. A correctly
    formatted message passes the commit-msg hook by construction.
-5. **If the pre-commit style hook rewrites files** (black, clang-format,
+6. **If the pre-commit style hook rewrites files** (black, clang-format,
    trailing-whitespace), it aborts the commit with the fixes left unstaged.
-   Re-stage the affected files and commit again.
+   Re-stage the affected files (the note too) and commit again.
+
+## Commit-notes (cross-clone sharing)
+
+We run several local clones of this repo in parallel (one Claude Code instance
+each) and periodically merge them into a master before pushing. So **every commit
+carries a small note** under `docs/commit-notes/` describing what it did; when
+another clone pulls or merges, its Claude reads the new notes (via the `git-pull`
+skill) to learn what changed. The contract:
+
+- **One file per commit**, committed *in the same commit* as the change (atomic) —
+  history stays 1:1 and parallel clones never collide on a shared index.
+- **Path/name:** `docs/commit-notes/<YYYYMMDD-HHMMSS>-<slug>.md` (timestamp orders
+  them; slug is the kebab-cased header summary).
+- **Template:**
+
+  ```markdown
+  # <commit header line>
+
+  - **Date:** <YYYY-MM-DD HH:MM>   ·   **Branch:** <current branch>
+
+  ## Goal
+  <1-3 sentences: why this change exists / what it achieves>
+
+  ## Summary of changes
+  <short paragraph or a few bullets: what was done>
+
+  ## Files changed
+  - `path/to/file` — <1-2 line descriptor of what changed in this file>
+  ```
+
+- `docs/commit-notes/README.md` is the convention doc, **not** a note — leave it be.
 
 ## Header format (first line — enforced)
 

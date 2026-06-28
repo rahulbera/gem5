@@ -56,6 +56,7 @@
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/run_ahead_engine.hh"
 #include "debug/Activity.hh"
 #include "debug/Drain.hh"
 #include "debug/Fetch.hh"
@@ -1019,6 +1020,16 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     instruction->setTid(tid);
 
     instruction->setThreadState(cpu->thread[tid]);
+
+    // Execute-at-fetch: attach the run-ahead engine's ground truth for this
+    // instruction on the true path (v1: metadata only, validated at commit).
+    if (cpu->runAheadEngine && cpu->runAheadEngine->enabled()) {
+        const OracleInfo *oi = cpu->runAheadEngine->consumeAtFetch(
+            this_pc.instAddr(), this_pc.microPC());
+        if (oi) {
+            instruction->setOracleInfo(oi, oi->trueIndex);
+        }
+    }
 
     DPRINTF(Fetch, "[tid:%i] Instruction PC %s created [sn:%lli].\n",
             tid, this_pc, seq);

@@ -49,6 +49,7 @@ if env['CONF']['BUILD_ISA']:
     SimObject('IQUnit.py', sim_objects=['IQUnit'])
     SimObject('SMT.py',
         enums=['SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
+    SimObject('RunAheadEngine.py', sim_objects=['RunAheadEngine'])
 
     Source('bac.cc')
     Source('commit.cc')
@@ -75,6 +76,9 @@ if env['CONF']['BUILD_ISA']:
 
     # Execute-at-fetch run-ahead engine (OracleInfo substrate).
     Source('oracle_info.cc')
+    Source('run_ahead_overlay.cc')
+    Source('run_ahead_fifo.cc')
+    Source('run_ahead_engine.cc')
 
     DebugFlag('BAC')
     DebugFlag('CommitRate')
@@ -85,6 +89,7 @@ if env['CONF']['BUILD_ISA']:
     DebugFlag('LSQUnit')
     DebugFlag('MemDepUnit')
     DebugFlag('O3CPU')
+    DebugFlag('Oracle')
     DebugFlag('ROB')
     DebugFlag('Rename')
     DebugFlag('Scoreboard')
@@ -97,6 +102,10 @@ if env['CONF']['BUILD_ISA']:
         'DynInst', 'O3CPU', 'Activity', 'Scoreboard', 'Writeback' ])
 
     GTest('oracle_info.test', 'oracle_info.test.cc', 'oracle_info.cc')
+    GTest('run_ahead_overlay.test', 'run_ahead_overlay.test.cc',
+        'run_ahead_overlay.cc')
+    GTest('run_ahead_fifo.test', 'run_ahead_fifo.test.cc',
+        'run_ahead_fifo.cc', 'oracle_info.cc')
 
     SimObject('BaseO3Checker.py', sim_objects=['BaseO3Checker'])
     Source('checker.cc')

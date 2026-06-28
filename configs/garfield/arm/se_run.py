@@ -41,6 +41,8 @@ import os
 import shlex
 
 import m5
+from m5.objects import ArmRunAheadEngine
+from m5.proxy import Parent
 from m5.util import addToPath
 from m5.util.convert import toFrequency
 
@@ -158,6 +160,17 @@ def parse_args():
         default="0Hz",
         help="CPU progress-heartbeat frequency (e.g. 1kHz); 0Hz disables.",
     )
+    parser.add_argument(
+        "--oracle",
+        action="store_true",
+        help="Attach the execute-at-fetch run-ahead engine (OracleInfo "
+        "substrate).",
+    )
+    parser.add_argument(
+        "--oracle-validate",
+        action="store_true",
+        help="With --oracle, assert OracleInfo == real execution at commit.",
+    )
     return parser.parse_args()
 
 
@@ -185,6 +198,16 @@ for core in processor.get_cores():
     if args.max_insts > 0:
         cpu.max_insts_any_thread = args.max_insts
     cpu.progress_interval = args.progress_interval
+    if args.oracle:
+        cpu.runAheadEngine = ArmRunAheadEngine(
+            enable=True,
+            validateOracle=args.oracle_validate,
+            workload=Parent.workload,
+        )
+        # The core's createThreads() already ran (in BaseCPUCore.__init__,
+        # before the engine was attached), so build the engine's shadow
+        # ISA/decoder explicitly now.
+        cpu.runAheadEngine.createThreads()
 
 board = SimpleBoard(
     clk_freq=args.clk_freq,

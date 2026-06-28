@@ -26,10 +26,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "cpu/o3/oracle_info.hh"
+#include "cpu/o3/run_ahead_overlay.hh"
 
-#include <iomanip>
-#include <sstream>
+#include <cassert>
 
 namespace gem5
 {
@@ -37,44 +36,27 @@ namespace gem5
 namespace o3
 {
 
-bool
-OracleInfo::destsMatch(const std::vector<OracleRegResult> &actual) const
+void
+RunAheadStoreOverlay::write(Addr addr, const uint8_t *data, size_t n)
 {
-    if (dests.size() != actual.size()) {
-        return false;
+    for (size_t i = 0; i < n; ++i) {
+        bytes[addr + i] = data[i];
     }
-    for (size_t i = 0; i < dests.size(); ++i) {
-        if (!(dests[i] == actual[i])) {
-            return false;
-        }
-    }
-    return true;
 }
 
-std::string
-OracleInfo::dump() const
+void
+RunAheadStoreOverlay::read(Addr addr, uint8_t *out, size_t n) const
 {
-    std::ostringstream os;
-    os << "OracleInfo{idx=" << trueIndex << std::hex << " pc=0x" << pc
-       << " npc=0x" << npc << std::dec << " upc=" << upc << " dests=[";
-    for (const auto &d : dests) {
-        os << "(c" << d.regClass << ":r" << d.regIndex << "=0x";
-        for (auto it = d.value.rbegin(); it != d.value.rend(); ++it) {
-            os << std::hex << std::setw(2) << std::setfill('0')
-               << static_cast<int>(*it) << std::dec;
+    // The engine always installs a base reader before any read. Use a plain
+    // assert (not panic_if) so this pure helper carries no logging link deps.
+    assert(baseReader);
+    baseReader(addr, n, out);
+    for (size_t i = 0; i < n; ++i) {
+        auto it = bytes.find(addr + i);
+        if (it != bytes.end()) {
+            out[i] = it->second;
         }
-        os << ")";
     }
-    os << "]";
-    if (isMemRef) {
-        os << std::hex << " mem@0x" << effAddr << std::dec
-           << " sz=" << memSize;
-    }
-    if (faulted) {
-        os << " fault";
-    }
-    os << "}";
-    return os.str();
 }
 
 } // namespace o3

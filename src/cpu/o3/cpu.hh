@@ -93,6 +93,8 @@ class ThreadContext;
  * within it, as well as all of the time buffers between stages.  The
  * tick() function for the CPU is defined here.
  */
+class RunAheadEngine;
+
 class CPU : public BaseCPU
 {
   public:
@@ -553,6 +555,11 @@ class CPU : public BaseCPU
      * is not being used.
      */
     gem5::Checker<DynInstPtr> *checker;
+
+    /** Optional execute-at-fetch run-ahead engine (NULL if disabled). v1
+     *  produces and validates OracleInfo; it does not alter the pipeline.
+     */
+    RunAheadEngine *runAheadEngine = nullptr;
 
     /** Pointer to the system. */
     System *system;

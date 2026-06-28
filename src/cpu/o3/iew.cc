@@ -51,6 +51,7 @@
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/fu_pool.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/run_ahead_engine.hh"
 #include "cpu/timebuf.hh"
 #include "debug/Activity.hh"
 #include "debug/Drain.hh"
@@ -268,6 +269,11 @@ IEW::startupStage()
     // Initialize the checker's dcache port here
     if (cpu->checker) {
         cpu->checker->setDcachePort(&ldstQueue.getDataPort());
+    }
+
+    // Same for the run-ahead engine: its functional reads snoop the D-side.
+    if (cpu->runAheadEngine) {
+        cpu->runAheadEngine->setDcachePort(&ldstQueue.getDataPort());
     }
 
     cpu->activateStage(CPU::IEWIdx);
@@ -489,6 +495,12 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
         toCommit->includeSquashInst[tid] = false;
 
         wroteToTimeBuffer = true;
+
+        // Realign the run-ahead engine: the branch survives, so re-fetch the
+        // correct path starting at the record after it.
+        if (cpu->runAheadEngine) {
+            cpu->runAheadEngine->onSquash(inst.get(), false);
+        }
     }
 
 }
@@ -516,6 +528,12 @@ IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
         toCommit->includeSquashInst[tid] = true;
 
         wroteToTimeBuffer = true;
+
+        // Realign the run-ahead engine: the violator is re-fetched, so rewind
+        // to its own record.
+        if (cpu->runAheadEngine) {
+            cpu->runAheadEngine->onSquash(inst.get(), true);
+        }
     }
 }
 

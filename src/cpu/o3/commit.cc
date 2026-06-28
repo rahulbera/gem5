@@ -55,6 +55,7 @@
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/run_ahead_engine.hh"
 #include "cpu/o3/thread_state.hh"
 #include "cpu/timebuf.hh"
 #include "debug/Activity.hh"
@@ -599,6 +600,11 @@ Commit::squashAfter(ThreadID tid, const DynInstPtr &head_inst)
     assert(!squashAfterInst[tid] || squashAfterInst[tid] == head_inst);
     commitStatus[tid] = SquashAfterPending;
     squashAfterInst[tid] = head_inst;
+
+    // The head survives; re-fetch the rest from the record after it.
+    if (cpu->runAheadEngine) {
+        cpu->runAheadEngine->onSquash(head_inst.get(), false);
+    }
 }
 
 void
@@ -1160,6 +1166,12 @@ Commit::commitInsts()
                     cpu->checker->verify(head_inst);
                 }
 
+                // Validate the run-ahead engine's at-fetch ground truth
+                // against the real execution, and release its FIFO entry.
+                if (cpu->runAheadEngine) {
+                    cpu->runAheadEngine->validateAtCommit(head_inst.get());
+                }
+
                 cpu->traceFunctions(pc[tid]->instAddr());
 
                 head_inst->staticInst->advancePC(*pc[tid]);
@@ -1351,6 +1363,12 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
 
         // Exit state update mode to avoid accidental updating.
         thread[tid]->noSquashFromTC = false;
+
+        // If the run-ahead engine barriered at this syscall, resync it to the
+        // post-syscall architectural state and resume producing.
+        if (cpu->runAheadEngine && head_inst->staticInst->isSyscall()) {
+            cpu->runAheadEngine->onSyscallCommit(cpu->tcBase(tid));
+        }
 
         commitStatus[tid] = TrapPending;
 

@@ -72,6 +72,8 @@ class Packet;
 namespace o3
 {
 
+struct OracleInfo;
+
 class DynInst : public ExecContext, public RefCounted
 {
   private:
@@ -110,6 +112,23 @@ class DynInst : public ExecContext, public RefCounted
             const StaticInstPtr &_macroop);
 
     ~DynInst();
+
+    // ---- Execute-at-fetch ground truth (run-ahead engine; v1 metadata) ----
+    /** Ground-truth record attached at fetch, or nullptr if this instruction
+     *  is off the true path / the engine is disabled. Validated at commit. */
+    const OracleInfo *oracleInfo = nullptr;
+    uint64_t oracleTrueIndex = 0;
+    bool
+    hasOracleInfo() const
+    {
+        return oracleInfo != nullptr;
+    }
+    void
+    setOracleInfo(const OracleInfo *oi, uint64_t idx)
+    {
+        oracleInfo = oi;
+        oracleTrueIndex = idx;
+    }
 
     /** Executes the instruction.*/
     Fault execute();

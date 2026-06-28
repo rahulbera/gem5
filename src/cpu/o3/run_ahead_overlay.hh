@@ -26,10 +26,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "cpu/o3/oracle_info.hh"
+#ifndef __CPU_O3_RUN_AHEAD_OVERLAY_HH__
+#define __CPU_O3_RUN_AHEAD_OVERLAY_HH__
 
-#include <iomanip>
-#include <sstream>
+#include <cstdint>
+#include <functional>
+#include <unordered_map>
+#include <utility>
+
+#include "base/types.hh"
 
 namespace gem5
 {
@@ -37,45 +42,51 @@ namespace gem5
 namespace o3
 {
 
-bool
-OracleInfo::destsMatch(const std::vector<OracleRegResult> &actual) const
+/**
+ * Copy-on-write byte overlay over a base memory, used by the run-ahead engine
+ * to hold its own ahead-of-commit stores without disturbing the timing model's
+ * memory. Reads consult the overlay per byte and fall through to the supplied
+ * base reader on a miss; writes land only in the overlay. Byte granularity
+ * makes partial-overlap reads correct with no special cases.
+ */
+class RunAheadStoreOverlay
 {
-    if (dests.size() != actual.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < dests.size(); ++i) {
-        if (!(dests[i] == actual[i])) {
-            return false;
-        }
-    }
-    return true;
-}
+  public:
+    /** Reads @p n bytes of base memory at @p addr into the caller's buffer. */
+    using BaseReader = std::function<void(Addr, size_t, uint8_t *)>;
 
-std::string
-OracleInfo::dump() const
-{
-    std::ostringstream os;
-    os << "OracleInfo{idx=" << trueIndex << std::hex << " pc=0x" << pc
-       << " npc=0x" << npc << std::dec << " upc=" << upc << " dests=[";
-    for (const auto &d : dests) {
-        os << "(c" << d.regClass << ":r" << d.regIndex << "=0x";
-        for (auto it = d.value.rbegin(); it != d.value.rend(); ++it) {
-            os << std::hex << std::setw(2) << std::setfill('0')
-               << static_cast<int>(*it) << std::dec;
-        }
-        os << ")";
+    void
+    setBaseReader(BaseReader r)
+    {
+        baseReader = std::move(r);
     }
-    os << "]";
-    if (isMemRef) {
-        os << std::hex << " mem@0x" << effAddr << std::dec
-           << " sz=" << memSize;
+
+    /** Record an ahead store of @p n bytes from @p data at @p addr. */
+    void write(Addr addr, const uint8_t *data, size_t n);
+
+    /** Read @p n bytes at @p addr: overlay where present, else base. */
+    void read(Addr addr, uint8_t *out, size_t n) const;
+
+    /** Forget all overlaid stores (e.g. at a syscall resync point). */
+    void
+    drop()
+    {
+        bytes.clear();
     }
-    if (faulted) {
-        os << " fault";
+
+    /** Number of overlaid bytes (for tests / bounding). */
+    size_t
+    size() const
+    {
+        return bytes.size();
     }
-    os << "}";
-    return os.str();
-}
+
+  private:
+    std::unordered_map<Addr, uint8_t> bytes;
+    BaseReader baseReader;
+};
 
 } // namespace o3
 } // namespace gem5
+
+#endif // __CPU_O3_RUN_AHEAD_OVERLAY_HH__

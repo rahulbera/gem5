@@ -48,6 +48,7 @@
 #include "cpu/checker/thread_context.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/run_ahead_engine.hh"
 #include "cpu/o3/thread_context.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/thread_context.hh"
@@ -135,6 +136,17 @@ CPU::CPU(const BaseO3CPUParams &params)
         checker->setSystem(params.system);
     } else {
         checker = NULL;
+    }
+
+    // Optional execute-at-fetch run-ahead engine: a CheckerCPU-style side-car
+    // that runs the true path ahead and produces OracleInfo. Wire it like the
+    // checker (system + instruction port); its dcache port is set in IEW.
+    if (params.runAheadEngine) {
+        runAheadEngine = params.runAheadEngine;
+        runAheadEngine->setSystem(params.system);
+        runAheadEngine->setIcachePort(&fetch.getInstPort());
+    } else {
+        runAheadEngine = nullptr;
     }
 
     if (!FullSystem) {
@@ -453,6 +465,12 @@ CPU::startup()
     iew.startupStage();
     rename.startupStage();
     commit.startupStage();
+
+    // Sync the run-ahead engine's shadow state to the (now-initialized)
+    // architectural state so it can produce ground truth from program start.
+    if (runAheadEngine && numThreads > 0) {
+        runAheadEngine->initFromThreadContext(tcBase(0));
+    }
 }
 
 void

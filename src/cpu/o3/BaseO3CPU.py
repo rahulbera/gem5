@@ -47,6 +47,7 @@ from m5.objects.FUPool import *
 from m5.objects.IndexingPolicies import *
 from m5.objects.IQUnit import *
 from m5.objects.ReplacementPolicies import *
+from m5.objects.RunAheadEngine import *
 from m5.objects.SMT import *
 from m5.params import *
 from m5.proxy import *
@@ -69,6 +70,13 @@ class BaseO3CPU(BaseCPU):
     @classmethod
     def support_take_over(cls):
         return True
+
+    def createThreads(self):
+        super().createThreads()
+        # Cascade to the run-ahead engine so its shadow ISA/decoder are built
+        # (mirrors the checker cascade in BaseCPU.createThreads).
+        if self.runAheadEngine != NULL:
+            self.runAheadEngine.createThreads()
 
     activity = Param.Unsigned(0, "Initial count")
 
@@ -209,6 +217,9 @@ class BaseO3CPU(BaseCPU):
             conditionalBranchPred=TournamentBP(numThreads=Parent.numThreads)
         ),
         "Branch Predictor",
+    )
+    runAheadEngine = Param.RunAheadEngine(
+        NULL, "Execute-at-fetch run-ahead engine (NULL = disabled)"
     )
     needsTSO = Param.Bool(False, "Enable TSO Memory model")
 

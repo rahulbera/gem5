@@ -40,11 +40,20 @@ gmock_include = gmock_base.Dir('include')
 gtest_src = Dir('googletest/src')
 gmock_src = Dir('googlemock/src')
 
-env.Append(CPPPATH=[gtest_include, gmock_include])
+# Prepend (not append) so the bundled GoogleTest headers are searched before
+# any other -I on the path. On hosts where another GoogleTest is installed in a
+# directory already on CPPPATH (e.g. an Anaconda prefix pulled in by protobuf's
+# pkg-config), appending would let that stale copy shadow ours and break the
+# build with redefinition / missing-macro errors.
+env.Prepend(CPPPATH=[gtest_include, gmock_include])
 env.Append(LIBPATH=[build])
 
-genv = env.Clone(CCFLAGS=['-g', '-pthread', '-Wno-undef', '-isystem',
-                          str(gtest_include), '-isystem', str(gmock_include)])
+# Do NOT also add the bundled include dirs via -isystem here: they are already
+# on CPPPATH (prepended above, so first). Passing the same directory as both -I
+# and -isystem makes GCC ignore the -I and search it only at the system-include
+# position -- behind any other -I (e.g. an Anaconda prefix added by protobuf's
+# pkg-config), letting a stale system GoogleTest shadow ours.
+genv = env.Clone(CCFLAGS=['-g', '-pthread', '-Wno-undef'])
 genv.Append(CPPPATH=[gtest_base, gmock_base])
 
 gtest_all = genv.Object(gtest_src.File('gtest-all.cc'))
@@ -53,5 +62,6 @@ gtest_main = genv.StaticLibrary(target='libgtest', source=[
         gtest_all, gmock_all, gtest_src.File('gtest_main.cc')])
 
 env['GTEST_LIBS'] = [gtest_main[0], 'pthread']
-env['GTEST_CPPFLAGS'] = [
-    '-pthread', '-DUSE_GMOCK', '-Wno-undef', '-isystem', gtest_include.abspath]
+# Bundled gtest/gmock includes come (first) from CPPPATH; see the note above on
+# why we must not re-add them as -isystem.
+env['GTEST_CPPFLAGS'] = ['-pthread', '-DUSE_GMOCK', '-Wno-undef']

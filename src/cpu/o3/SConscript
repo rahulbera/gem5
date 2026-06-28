@@ -59,6 +59,7 @@ if env['CONF']['BUILD_ISA']:
     Source('free_list.cc')
     Source('ftq.cc')
     Source('fu_pool.cc')
+    Source('ghost_policy.cc')
     Source('iew.cc')
     Source('inst_queue.cc')
     Source('lsq.cc')
@@ -72,6 +73,8 @@ if env['CONF']['BUILD_ISA']:
     Source('store_set.cc')
     Source('thread_context.cc')
     Source('thread_state.cc')
+
+    GTest('ghost_policy.test', 'ghost_policy.test.cc', 'ghost_policy.cc')
 
     DebugFlag('BAC')
     DebugFlag('CommitRate')

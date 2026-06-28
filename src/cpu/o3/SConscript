@@ -73,6 +73,9 @@ if env['CONF']['BUILD_ISA']:
     Source('thread_context.cc')
     Source('thread_state.cc')
 
+    # Execute-at-fetch run-ahead engine (OracleInfo substrate).
+    Source('oracle_info.cc')
+
     DebugFlag('BAC')
     DebugFlag('CommitRate')
     DebugFlag('FTQ')
@@ -92,6 +95,8 @@ if env['CONF']['BUILD_ISA']:
         'IEW', 'Commit',
         'IQ', 'ROB', 'FreeList', 'LSQ', 'LSQUnit', 'StoreSet', 'MemDepUnit',
         'DynInst', 'O3CPU', 'Activity', 'Scoreboard', 'Writeback' ])
+
+    GTest('oracle_info.test', 'oracle_info.test.cc', 'oracle_info.cc')
 
     SimObject('BaseO3Checker.py', sim_objects=['BaseO3Checker'])
     Source('checker.cc')

@@ -158,6 +158,12 @@ def parse_args():
         default="0Hz",
         help="CPU progress-heartbeat frequency (e.g. 1kHz); 0Hz disables.",
     )
+    parser.add_argument(
+        "--ghost-exec",
+        action="store_true",
+        help="Garfield: ghost-execute control uops (skip OoO IQ entry, "
+        "issue bandwidth, execution port).",
+    )
     return parser.parse_args()
 
 
@@ -185,6 +191,7 @@ for core in processor.get_cores():
     if args.max_insts > 0:
         cpu.max_insts_any_thread = args.max_insts
     cpu.progress_interval = args.progress_interval
+    cpu.ghostExec = args.ghost_exec
 
 board = SimpleBoard(
     clk_freq=args.clk_freq,

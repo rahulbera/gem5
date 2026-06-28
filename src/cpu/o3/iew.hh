@@ -47,6 +47,7 @@
 #include "base/statistics.hh"
 #include "cpu/o3/comm.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/ghost_policy.hh"
 #include "cpu/o3/inst_queue.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/lsq.hh"
@@ -395,6 +396,9 @@ class IEW
 
     /** Width of issue, in instructions. */
     unsigned issueWidth;
+
+    /** Garfield ghost-execution policy config (from BaseO3CPU.ghostExec). */
+    GhostConfig ghostCfg;
 
     /** Index into queue of instructions being written back. */
     unsigned wbNumInst;

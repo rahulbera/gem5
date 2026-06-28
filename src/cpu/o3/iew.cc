@@ -107,6 +107,9 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
     exeStatus = Running;
     wbStatus = Idle;
 
+    // Garfield: ghost-execution config from BaseO3CPU.ghostExec.
+    ghostCfg.enable = params.ghostExec;
+
     // Setup wire to read instructions coming from issue.
     fromIssue = issueToExecQueue.getWire(-issueToExecuteDelay);
 
@@ -936,6 +939,12 @@ IEW::dispatchInsts(ThreadID tid)
             toRename->iewInfo[tid].dispatched++;
 
             continue;
+        }
+
+        // Garfield Stage 1: tag control uops as ghost so the backend skips
+        // their IQ entry, issue bandwidth, and execution port.
+        if (ghostPolicy(inst->isControl(), ghostCfg)) {
+            inst->setGhost();
         }
 
         // Check for full conditions.

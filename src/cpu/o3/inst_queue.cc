@@ -229,7 +229,8 @@ InstructionQueue::InstructionQueue(CPU *cpu_ptr, IEW *iew_ptr,
       totalWidth(params.issueWidth),
       commitToIEWDelay(params.commitToIEWDelay),
       iqStats(cpu, totalWidth),
-      iqIOStats(cpu)
+      iqIOStats(cpu),
+      ghostStats(cpu)
 {
     const auto &reg_classes = params.isa[0]->regClasses();
     // Set the number of total physical registers
@@ -421,6 +422,12 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
         ;
     fuBusyRate = fuBusy / instsIssued;
 }
+
+InstructionQueue::GhostStats::GhostStats(CPU *cpu)
+    : statistics::Group(cpu, "ghost"),
+      ADD_STAT(ghostInsts, statistics::units::Count::get(),
+               "Ghost uops that entered the IQ")
+{}
 
 InstructionQueue::IQIOStats::IQIOStats(statistics::Group *parent)
     : statistics::Group(parent),
@@ -702,6 +709,10 @@ InstructionQueue::insert(const DynInstPtr &new_inst)
     }
 
     ++iqStats.instsAdded;
+
+    if (new_inst->isGhost()) {
+        ghostStats.ghostInsts++;
+    }
 }
 
 void

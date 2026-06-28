@@ -225,6 +225,12 @@ class BaseO3CPU(BaseCPU):
 
     ## Parameters for decoupled front-end
     decoupledFrontEnd = Param.Bool(False, "Enables the decoupled front-end")
+
+    ghostExec = Param.Bool(
+        False,
+        "Garfield: ghost-execute control uops (skip OoO IQ entry, issue "
+        "bandwidth, and execution port). Off = unmodified baseline.",
+    )
     numFTQEntries = Param.Unsigned(
         8,
         "Number of entries in the Fetch target queue. (only used for "

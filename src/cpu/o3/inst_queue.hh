@@ -633,6 +633,14 @@ class InstructionQueue
         statistics::Scalar fpAluAccesses;
         statistics::Scalar vecAluAccesses;
     } iqIOStats;
+
+    /** Garfield ghost-execution stats. */
+    struct GhostStats : public statistics::Group
+    {
+        GhostStats(CPU *cpu);
+        /** Ghost uops that entered the IQ. */
+        statistics::Scalar ghostInsts;
+    } ghostStats;
 };
 
 } // namespace o3

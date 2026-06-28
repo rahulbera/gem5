@@ -187,8 +187,10 @@ class DynInst : public ExecContext, public RefCounted
         ReqMade,
         MemOpDone,
         HtmFromTransaction,
-        NoCapableFU,           /// Processor does not have capability to
-                               /// execute the instruction
+        NoCapableFU, /// Processor does not have capability to
+                     /// execute the instruction
+        IsGhost,     /// Garfield: skip OoO IQ entry, issue
+                     /// bandwidth, and execution port
         MaxFlags
     };
 
@@ -383,6 +385,17 @@ class DynInst : public ExecContext, public RefCounted
     bool notAnInst() const { return instFlags[NotAnInst]; }
     void setNotAnInst() { instFlags[NotAnInst] = true; }
 
+    /** Garfield: ghost uop (skips OoO IQ/issue/port accounting). */
+    bool
+    isGhost() const
+    {
+        return instFlags[IsGhost];
+    }
+    void
+    setGhost()
+    {
+        instFlags[IsGhost] = true;
+    }
 
     ////////////////////////////////////////////
     //

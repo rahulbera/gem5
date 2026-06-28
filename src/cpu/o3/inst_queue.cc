@@ -118,21 +118,28 @@ IQUnit::IQUnit(const IQUnitParams &params)
 void
 IQUnit::insert(const DynInstPtr &inst)
 {
-    assert(_freeEntries != 0);
-    _freeEntries--;
+    if (!inst->isGhost()) {
+        assert(_freeEntries != 0);
+        _freeEntries--;
+        count[inst->threadNumber]++;
+    } else {
+        residentGhosts++;
+    }
 
     inst->setInIQ(this);
-
-    count[inst->threadNumber]++;
 }
 
 void
 IQUnit::remove(const DynInstPtr &inst)
 {
-    _freeEntries++;
-    assert(_freeEntries <= _numEntries);
-
-    count[inst->threadNumber]--;
+    if (!inst->isGhost()) {
+        _freeEntries++;
+        assert(_freeEntries <= _numEntries);
+        count[inst->threadNumber]--;
+    } else {
+        residentGhosts--;
+        assert(residentGhosts >= 0);
+    }
 }
 
 void
@@ -426,7 +433,9 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
 InstructionQueue::GhostStats::GhostStats(CPU *cpu)
     : statistics::Group(cpu, "ghost"),
       ADD_STAT(ghostInsts, statistics::units::Count::get(),
-               "Ghost uops that entered the IQ")
+               "Ghost uops that entered the IQ"),
+      ADD_STAT(ghostIqEntriesAvoided, statistics::units::Count::get(),
+               "IQ entry-cycles freed by ghosting (summed over cycles)")
 {}
 
 InstructionQueue::IQIOStats::IQIOStats(statistics::Group *parent)
@@ -630,6 +639,9 @@ InstructionQueue::isFull(ThreadID tid)
 bool
 InstructionQueue::isFull(const DynInstPtr &inst)
 {
+    if (inst->isGhost()) {
+        return false;
+    }
     return numFreeEntries(inst) == 0;
 }
 
@@ -883,6 +895,12 @@ InstructionQueue::scheduleReadyInsts()
     // This will avoid trying to schedule a certain op class if there are no
     // FUs that handle it.
     int total_issued = 0;
+
+    // Garfield: integrate freed IQ entry-cycles (resident ghosts this cycle).
+    for (auto *iq : iqs) {
+        ghostStats.ghostIqEntriesAvoided += iq->numResidentGhosts();
+    }
+
     ListOrderIt order_it = listOrder.begin();
     ListOrderIt order_end_it = listOrder.end();
 

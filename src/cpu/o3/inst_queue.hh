@@ -132,6 +132,13 @@ class IQUnit : public SimObject
         return _fuPool;
     }
 
+    /** Ghost uops currently resident (not charged to capacity). */
+    int
+    numResidentGhosts() const
+    {
+        return residentGhosts;
+    }
+
   private:
     /** IQ sharing policy for SMT. */
     SMTQueuePolicy iqPolicy;
@@ -156,6 +163,9 @@ class IQUnit : public SimObject
 
     /** Function unit pool. */
     FUPool *_fuPool;
+
+    /** Garfield: ghost uops resident in this IQ, excluded from capacity. */
+    int residentGhosts = 0;
 };
 
 /**
@@ -640,6 +650,8 @@ class InstructionQueue
         GhostStats(CPU *cpu);
         /** Ghost uops that entered the IQ. */
         statistics::Scalar ghostInsts;
+        /** IQ entry-cycles freed by ghosting (summed over cycles). */
+        statistics::Scalar ghostIqEntriesAvoided;
     } ghostStats;
 };
 

@@ -652,6 +652,10 @@ class InstructionQueue
         statistics::Scalar ghostInsts;
         /** IQ entry-cycles freed by ghosting (summed over cycles). */
         statistics::Scalar ghostIqEntriesAvoided;
+        /** Ghost issues not charged against issue width. */
+        statistics::Scalar ghostIssueSlotsAvoided;
+        /** Ghost issues that skipped functional-unit acquisition. */
+        statistics::Scalar ghostFuAcquisitionsAvoided;
     } ghostStats;
 };
 

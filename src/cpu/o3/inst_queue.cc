@@ -435,7 +435,11 @@ InstructionQueue::GhostStats::GhostStats(CPU *cpu)
       ADD_STAT(ghostInsts, statistics::units::Count::get(),
                "Ghost uops that entered the IQ"),
       ADD_STAT(ghostIqEntriesAvoided, statistics::units::Count::get(),
-               "IQ entry-cycles freed by ghosting (summed over cycles)")
+               "IQ entry-cycles freed by ghosting (summed over cycles)"),
+      ADD_STAT(ghostIssueSlotsAvoided, statistics::units::Count::get(),
+               "Ghost issues not charged against issue width"),
+      ADD_STAT(ghostFuAcquisitionsAvoided, statistics::units::Count::get(),
+               "Ghost issues that skipped functional-unit acquisition")
 {}
 
 InstructionQueue::IQIOStats::IQIOStats(statistics::Group *parent)
@@ -679,6 +683,17 @@ InstructionQueue::findIQ(const DynInstPtr &inst)
         // return the IQ as valid
         if (iq->numFreeEntries(inst) > 0) {
             return iq;
+        }
+    }
+    // Garfield: a ghost consumes no counted IQ entry (it is excluded from
+    // capacity), so place it in any capable IQ even when the IQ is nominally
+    // full of non-ghost uops -- mirrors isFull() never blocking a ghost.
+    if (inst->isGhost()) {
+        const OpClass op_class = inst->opClass();
+        for (auto iq : iqs) {
+            if (op_class == No_OpClass || iq->fuPool()->isCapable(op_class)) {
+                return iq;
+            }
         }
     }
     return nullptr;
@@ -946,16 +961,22 @@ InstructionQueue::scheduleReadyInsts()
         assert(iq);
         auto fu_pool = iq->fuPool();
         if (op_class != No_OpClass) {
-            idx = fu_pool->getUnit(op_class);
-            if (issuing_inst->isFloating()) {
-                iqIOStats.fpAluAccesses++;
-            } else if (issuing_inst->isVector()) {
-                iqIOStats.vecAluAccesses++;
+            if (issuing_inst->isGhost()) {
+                // Ghost: no OoO FU. idx stays NoNeedFU, op_latency stays 1,
+                // so it routes to the 1-cycle execute path holding no FU.
+                ghostStats.ghostFuAcquisitionsAvoided++;
             } else {
-                iqIOStats.intAluAccesses++;
-            }
-            if (idx > FUPool::NoFreeFU) {
-                op_latency = fu_pool->getOpLatency(op_class);
+                idx = fu_pool->getUnit(op_class);
+                if (issuing_inst->isFloating()) {
+                    iqIOStats.fpAluAccesses++;
+                } else if (issuing_inst->isVector()) {
+                    iqIOStats.vecAluAccesses++;
+                } else {
+                    iqIOStats.intAluAccesses++;
+                }
+                if (idx > FUPool::NoFreeFU) {
+                    op_latency = fu_pool->getOpLatency(op_class);
+                }
             }
         }
 
@@ -1016,7 +1037,11 @@ InstructionQueue::scheduleReadyInsts()
             }
 
             issuing_inst->setIssued();
-            ++total_issued;
+            if (!issuing_inst->isGhost()) {
+                ++total_issued;
+            } else {
+                ghostStats.ghostIssueSlotsAvoided++;
+            }
 
 #if TRACING_ON
             issuing_inst->issueTick = curTick() - issuing_inst->fetchTick;

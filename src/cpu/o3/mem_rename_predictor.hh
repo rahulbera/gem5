@@ -149,11 +149,8 @@ class MemRenamePredictor : public SimObject
     MrnPrediction
     predict(Addr loadPC)
     {
-        MrnPrediction p = tables.predict(loadPC);
-        if (p.valid) {
-            stats.predictionsMade++;
-        }
-        return p;
+        stats.predictLookups++;
+        return tables.predict(loadPC);
     }
 
     /** Commit: a retiring store deposits a value. */
@@ -172,16 +169,41 @@ class MemRenamePredictor : public SimObject
         tables.commitLoad(loadPC, effAddr, realValue, isSpGp);
     }
 
-    /** Writeback: reset confidence (loop-safety). */
+    /** Writeback: a forwarded load mispredicted. Reset confidence
+     *  (loop-safety) and record the flush cost (squashedInsts = the load plus
+     *  every younger in-flight instruction, all discarded by the squash). */
     void
-    mispredict(Addr loadPC)
+    mispredict(Addr loadPC, uint64_t squashedInsts)
     {
         stats.mispredicts++;
+        stats.squashedInsts += squashedInsts;
         tables.mispredict(loadPC);
+    }
+
+    /** Rename: a prediction was actually forwarded into a renamed reg. */
+    void
+    noteForwarded()
+    {
+        stats.predictionsMade++;
+    }
+
+    /** Writeback: a forwarded load verified correct. */
+    void
+    noteCorrect()
+    {
+        stats.predictionsCorrect++;
+    }
+
+    /** Whether MRN forwarding is restricted to integer-destination loads. */
+    bool
+    predictIntLoadsOnly() const
+    {
+        return _predictIntLoadsOnly;
     }
 
   private:
     MrnTables tables;
+    const bool _predictIntLoadsOnly;
 
     /** Training statistics (Garfield Stage 2, MRN). */
     struct MemRenameStats : public statistics::Group
@@ -191,10 +213,18 @@ class MemRenamePredictor : public SimObject
         statistics::Scalar storesTrained;
         /** Loads that trained the MRN predictor at commit. */
         statistics::Scalar loadsTrained;
-        /** High-confidence predictions forwarded at rename. */
+        /** Loads looked up in the predictor at rename (coverage base). */
+        statistics::Scalar predictLookups;
+        /** High-confidence predictions forwarded into a renamed reg. */
         statistics::Scalar predictionsMade;
+        /** Forwarded loads that verified correct at writeback. */
+        statistics::Scalar predictionsCorrect;
         /** Forwarded loads that verified wrong and forced a squash. */
         statistics::Scalar mispredicts;
+        /** Instructions discarded by MRN misprediction squashes (the load
+         *  plus all younger in-flight insts): the recovery cost / wasted
+         *  work of the pipe flush. */
+        statistics::Scalar squashedInsts;
     } stats;
 };
 

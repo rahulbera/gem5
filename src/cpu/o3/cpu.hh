@@ -286,6 +286,16 @@ class CPU : public BaseCPU
     /** Get the current instruction sequence number, and increment it. */
     InstSeqNum getAndIncrementInstSeq() { return globalSeqNum++; }
 
+    /** Get the current (next-to-assign) instruction sequence number without
+     *  incrementing it. Used by MRN to size a misprediction flush: every
+     *  seqNum below this and at/above the squashed load is younger, in-flight,
+     *  and discarded. */
+    InstSeqNum
+    getCurrentInstSeq() const
+    {
+        return globalSeqNum;
+    }
+
     /** Get the current fetch target sequence number, and increment it. */
     InstSeqNum
     getAndIncrementFTSeq()

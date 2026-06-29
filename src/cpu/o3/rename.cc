@@ -762,16 +762,32 @@ Rename::renameInsts(ThreadID tid)
                 memRenamePred->predict(inst->pcState().instAddr());
             if (pred.valid) {
                 PhysRegIdPtr dest = inst->renamedDestIdx(0);
-                if (dest->is(IntRegClass) && !dest->isFixedMapping()) {
-                    cpu->setReg(dest, pred.value, inst->threadNumber);
-                    scoreboard->setReg(dest);
-                    inst->setMrned();
-                    inst->setMrnPredVal(pred.value);
-                    DPRINTF(MRN,
-                            "[tid:%i] [sn:%llu] MRN forward PC %s "
-                            "value=%#x to renamed dest\n",
-                            inst->threadNumber, inst->seqNum, inst->pcState(),
-                            pred.value);
+                if (dest->is(IntRegClass)) {
+                    if (!dest->isFixedMapping()) {
+                        cpu->setReg(dest, pred.value, inst->threadNumber);
+                        scoreboard->setReg(dest);
+                        inst->setMrned();
+                        inst->setMrnPredVal(pred.value);
+                        memRenamePred->noteForwarded();
+                        DPRINTF(MRN,
+                                "[tid:%i] [sn:%llu] MRN forward PC %s "
+                                "value=%#x to renamed dest\n",
+                                inst->threadNumber, inst->seqNum,
+                                inst->pcState(), pred.value);
+                    }
+                } else if (!memRenamePred->predictIntLoadsOnly()) {
+                    // Mode B forwards a scalar RegVal; the regfile path panics
+                    // on full vector registers. Integer-only is enforced by
+                    // default (predictIntLoadsOnly); relaxing it for a
+                    // non-integer load fails loudly rather than corrupting
+                    // wide state.
+                    panic("MRN: value forwarding requested for a non-integer "
+                          "load (dest reg class %d, PC %s). Mode B forwards a "
+                          "scalar RegVal and supports integer-destination "
+                          "loads only. Keep predictIntLoadsOnly=True "
+                          "(default), or implement wide-value forwarding "
+                          "before relaxing it.",
+                          (int)dest->classValue(), inst->pcState());
                 }
             }
         }

@@ -38,7 +38,12 @@ class MemRenamePredictor(SimObject):
         True, "Train the predictor at commit (mode B value snapshot)"
     )
     predictIntLoadsOnly = Param.Bool(
-        False, "Only predict loads with an integer destination"
+        True,
+        "Mode B forwards a scalar RegVal, which is only valid for "
+        "integer-destination loads. When True (default), non-integer loads "
+        "are simply not forwarded. Setting it False relaxes the restriction "
+        "but is unimplemented for wide values, so a forwarded non-integer "
+        "load will panic.",
     )
     mrnMode = Param.MrnMode(
         "forward_value", "forward_value (B) | producer_reg_alias (C)"

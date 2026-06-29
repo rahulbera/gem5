@@ -202,6 +202,13 @@ def parse_args():
         choices=["forward-value", "producer-reg-alias"],
         help="MRN mode: forward-value (B) or producer-reg-alias (C).",
     )
+    parser.add_argument(
+        "--mrn-allow-nonint",
+        action="store_true",
+        help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
+        "mode B forwards a scalar value, so forwarding a non-integer "
+        "(vector/FP) load will panic. Default off (integer loads only).",
+    )
     return parser.parse_args()
 
 
@@ -237,6 +244,7 @@ for core in processor.get_cores():
             storeTableEntries=args.mrn_store_entries,
             loadTableEntries=args.mrn_load_entries,
             mrnMode=args.mrn_mode.replace("-", "_"),
+            predictIntLoadsOnly=not args.mrn_allow_nonint,
         )
 
 board = SimpleBoard(

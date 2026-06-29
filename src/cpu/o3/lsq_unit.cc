@@ -1140,17 +1140,25 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             if (inst->isMrned() && inst->numDestRegs() > 0) {
                 RegVal true_val =
                     cpu->getReg(inst->renamedDestIdx(0), inst->threadNumber);
+                MemRenamePredictor *mrn = iewStage->getMemRenamePred();
                 if (true_val != inst->mrnPredVal()) {
-                    MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                    // Flush cost: the load and every younger in-flight inst is
+                    // squashed (inclusive). globalSeqNum is the next seqNum to
+                    // assign, so (current - load) counts the load plus all
+                    // younger fetched instructions discarded by the squash.
+                    InstSeqNum squashed =
+                        cpu->getCurrentInstSeq() - inst->seqNum;
                     if (mrn) {
-                        mrn->mispredict(inst->pcState().instAddr());
+                        mrn->mispredict(inst->pcState().instAddr(), squashed);
                     }
                     DPRINTF(MRN,
                             "[tid:%i] [sn:%llu] MRN mispredict PC %s "
-                            "pred=%#x real=%#x -- squashing\n",
+                            "pred=%#x real=%#x -- squashing %llu insts\n",
                             inst->threadNumber, inst->seqNum, inst->pcState(),
-                            inst->mrnPredVal(), true_val);
+                            inst->mrnPredVal(), true_val, squashed);
                     iewStage->squashDueToMemOrder(inst, inst->threadNumber);
+                } else if (mrn) {
+                    mrn->noteCorrect();
                 }
             }
         } else {

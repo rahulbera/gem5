@@ -49,6 +49,7 @@
 #include "cpu/o3/mem_rename_predictor.hh"
 #include "cpu/reg_class.hh"
 #include "debug/Activity.hh"
+#include "debug/MRN.hh"
 #include "debug/Rename.hh"
 #include "params/BaseO3CPU.hh"
 
@@ -746,6 +747,34 @@ Rename::renameInsts(ThreadID tid)
         renameSrcRegs(inst, inst->threadNumber);
 
         renameDestRegs(inst, inst->threadNumber);
+
+        // Garfield MRN: if the predictor has a high-confidence value for this
+        // load, forward it into the renamed destination register now and mark
+        // it ready in the scoreboard so dependents can wake early. The load
+        // still executes normally; writeback verifies the forwarded value and
+        // squashes from the load (inclusive) on a mismatch. Restrict to
+        // integer destinations: mode B forwards a scalar RegVal, and the
+        // RegVal setReg path panics on full vector registers. Skip
+        // fixed-mapping dests (e.g. the zero register), which are not
+        // renameable.
+        if (memRenamePred && inst->isLoad() && inst->numDestRegs() > 0) {
+            MrnPrediction pred =
+                memRenamePred->predict(inst->pcState().instAddr());
+            if (pred.valid) {
+                PhysRegIdPtr dest = inst->renamedDestIdx(0);
+                if (dest->is(IntRegClass) && !dest->isFixedMapping()) {
+                    cpu->setReg(dest, pred.value, inst->threadNumber);
+                    scoreboard->setReg(dest);
+                    inst->setMrned();
+                    inst->setMrnPredVal(pred.value);
+                    DPRINTF(MRN,
+                            "[tid:%i] [sn:%llu] MRN forward PC %s "
+                            "value=%#x to renamed dest\n",
+                            inst->threadNumber, inst->seqNum, inst->pcState(),
+                            pred.value);
+                }
+            }
+        }
 
         if (inst->isAtomic() || inst->isStore()) {
             storesInProgress[tid]++;

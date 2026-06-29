@@ -52,6 +52,7 @@
 #include "debug/HtmCpu.hh"
 #include "debug/IEW.hh"
 #include "debug/LSQUnit.hh"
+#include "debug/MRN.hh"
 #include "mem/packet.hh"
 #include "mem/request.hh"
 
@@ -1129,6 +1130,29 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
         if (inst->fault == NoFault) {
             // Complete access to copy data to proper place.
             inst->completeAcc(pkt);
+
+            // Garfield MRN: verify a forwarded (memory-renamed) load. After
+            // completeAcc the renamed destination holds the architecturally
+            // correct value; compare it to the value forwarded at rename. On
+            // a mismatch, reset the predictor's confidence and squash from
+            // this load (inclusive) so it and its wrongly-woken dependents
+            // re-execute. On a match the early wakeup was correct.
+            if (inst->isMrned() && inst->numDestRegs() > 0) {
+                RegVal true_val =
+                    cpu->getReg(inst->renamedDestIdx(0), inst->threadNumber);
+                if (true_val != inst->mrnPredVal()) {
+                    MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                    if (mrn) {
+                        mrn->mispredict(inst->pcState().instAddr());
+                    }
+                    DPRINTF(MRN,
+                            "[tid:%i] [sn:%llu] MRN mispredict PC %s "
+                            "pred=%#x real=%#x -- squashing\n",
+                            inst->threadNumber, inst->seqNum, inst->pcState(),
+                            inst->mrnPredVal(), true_val);
+                    iewStage->squashDueToMemOrder(inst, inst->threadNumber);
+                }
+            }
         } else {
             // If the instruction has an outstanding fault, we cannot complete
             // the access as this discards the current fault.

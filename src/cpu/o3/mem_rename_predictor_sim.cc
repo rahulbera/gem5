@@ -20,7 +20,11 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(storesTrained, statistics::units::Count::get(),
                "Stores that deposited a value into the MRN value file"),
       ADD_STAT(loadsTrained, statistics::units::Count::get(),
-               "Loads that trained the MRN predictor at commit")
+               "Loads that trained the MRN predictor at commit"),
+      ADD_STAT(predictionsMade, statistics::units::Count::get(),
+               "High-confidence MRN predictions forwarded at rename"),
+      ADD_STAT(mispredicts, statistics::units::Count::get(),
+               "Forwarded MRN loads that verified wrong and forced a squash")
 {}
 
 } // namespace o3

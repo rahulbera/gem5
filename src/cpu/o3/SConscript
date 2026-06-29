@@ -89,6 +89,7 @@ if env['CONF']['BUILD_ISA']:
     DebugFlag('IQ')
     DebugFlag('LSQ')
     DebugFlag('LSQUnit')
+    DebugFlag('MRN')
     DebugFlag('MemDepUnit')
     DebugFlag('O3CPU')
     DebugFlag('ROB')

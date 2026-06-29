@@ -149,7 +149,11 @@ class MemRenamePredictor : public SimObject
     MrnPrediction
     predict(Addr loadPC)
     {
-        return tables.predict(loadPC);
+        MrnPrediction p = tables.predict(loadPC);
+        if (p.valid) {
+            stats.predictionsMade++;
+        }
+        return p;
     }
 
     /** Commit: a retiring store deposits a value. */
@@ -172,6 +176,7 @@ class MemRenamePredictor : public SimObject
     void
     mispredict(Addr loadPC)
     {
+        stats.mispredicts++;
         tables.mispredict(loadPC);
     }
 
@@ -186,6 +191,10 @@ class MemRenamePredictor : public SimObject
         statistics::Scalar storesTrained;
         /** Loads that trained the MRN predictor at commit. */
         statistics::Scalar loadsTrained;
+        /** High-confidence predictions forwarded at rename. */
+        statistics::Scalar predictionsMade;
+        /** Forwarded loads that verified wrong and forced a squash. */
+        statistics::Scalar mispredicts;
     } stats;
 };
 

@@ -251,16 +251,17 @@ class IEW
         return memRenamePred;
     }
 
+    /** Sends commit proper information for a squash due to a memory order
+     * violation. Public so the LSQ can trigger MRN misprediction recovery
+     * (squash from the renamed load inclusive) via its iewStage pointer.
+     */
+    void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid);
+
   private:
     /** Sends commit proper information for a squash due to a branch
      * mispredict.
      */
     void squashDueToBranch(const DynInstPtr &inst, ThreadID tid);
-
-    /** Sends commit proper information for a squash due to a memory order
-     * violation.
-     */
-    void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid);
 
     /** Sets Dispatch to blocked, and signals back to other stages to block. */
     void block(ThreadID tid);

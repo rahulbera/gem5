@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "base/statistics.hh"
 #include "base/types.hh"
 #include "sim/sim_object.hh"
 
@@ -155,6 +156,7 @@ class MemRenamePredictor : public SimObject
     void
     commitStore(Addr effAddr, RegVal value)
     {
+        stats.storesTrained++;
         tables.commitStore(effAddr, value);
     }
 
@@ -162,6 +164,7 @@ class MemRenamePredictor : public SimObject
     void
     commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp)
     {
+        stats.loadsTrained++;
         tables.commitLoad(loadPC, effAddr, realValue, isSpGp);
     }
 
@@ -174,6 +177,16 @@ class MemRenamePredictor : public SimObject
 
   private:
     MrnTables tables;
+
+    /** Training statistics (Garfield Stage 2, MRN). */
+    struct MemRenameStats : public statistics::Group
+    {
+        explicit MemRenameStats(statistics::Group *parent);
+        /** Stores that deposited a value into the MRN value file. */
+        statistics::Scalar storesTrained;
+        /** Loads that trained the MRN predictor at commit. */
+        statistics::Scalar loadsTrained;
+    } stats;
 };
 
 } // namespace o3

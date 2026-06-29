@@ -42,6 +42,7 @@
 #include "cpu/o3/commit.hh"
 
 #include <algorithm>
+#include <cstring>
 #include <set>
 #include <string>
 
@@ -1418,6 +1419,22 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
     // If this was a store, record it for this cycle.
     if (head_inst->isStore() || head_inst->isAtomic())
         committedStores[tid] = true;
+
+    // Garfield MRN: train the predictor on this committed (correct-path)
+    // load. The loaded value is in memData (loads complete before they
+    // commit); commitLoad binds the load PC to its producer slot and updates
+    // confidence. Training only — no timing effect.
+    if (memRenamePred && head_inst->isLoad() && head_inst->effAddrValid() &&
+        head_inst->memData) {
+        uint64_t loaded_val = 0;
+        size_t n = head_inst->effSize < sizeof(loaded_val)
+                       ? head_inst->effSize
+                       : sizeof(loaded_val);
+        std::memcpy(&loaded_val, head_inst->memData, n);
+        memRenamePred->commitLoad(head_inst->pcState().instAddr(),
+                                  head_inst->effAddr, loaded_val,
+                                  /* isSpGp */ false);
+    }
 
     // Return true to indicate that we have committed an instruction.
     return true;

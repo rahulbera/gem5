@@ -47,6 +47,7 @@
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/lsq.hh"
+#include "cpu/o3/mem_rename_predictor.hh"
 #include "debug/Activity.hh"
 #include "debug/HtmCpu.hh"
 #include "debug/IEW.hh"
@@ -873,6 +874,20 @@ LSQUnit::writebackStores()
             memset(inst->memData, 0, request->_size);
         else
             memcpy(inst->memData, storeWBIt->data(), request->_size);
+
+        // Garfield MRN: deposit this committed store's value into the
+        // predictor's value file, keyed by effective address, so a later
+        // load to the same address can be value-predicted. writebackStores
+        // runs only for committed (non-squashed) stores, so this is the
+        // correct-path deposit; it is training only and has no timing effect.
+        MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+        if (mrn && inst->effAddrValid()) {
+            uint64_t store_val = 0;
+            size_t n = request->_size < sizeof(store_val) ? request->_size
+                                                          : sizeof(store_val);
+            memcpy(&store_val, inst->memData, n);
+            mrn->commitStore(inst->effAddr, store_val);
+        }
 
         request->buildPackets();
 

@@ -65,6 +65,7 @@ namespace o3
 {
 
 class FUPool;
+class MemRenamePredictor;
 
 /**
  * IEW handles both single threaded and SMT IEW
@@ -241,6 +242,15 @@ class IEW
         ldstQueue.setLastRetiredHtmUid(tid, htmUid);
     }
 
+    /** Garfield: memory-rename predictor (null = MRN disabled). The LSQ
+     *  reaches it through its iewStage back-pointer. Held only; unused
+     *  until a later task. */
+    MemRenamePredictor *
+    getMemRenamePred() const
+    {
+        return memRenamePred;
+    }
+
   private:
     /** Sends commit proper information for a squash due to a branch
      * mispredict.
@@ -346,6 +356,10 @@ class IEW
   private:
     /** CPU pointer. */
     CPU *cpu;
+
+    /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
+     *  unused in this stage until a later task. */
+    MemRenamePredictor *memRenamePred = nullptr;
 
     /** Records if IEW has written to the time buffer this cycle, so that the
      * CPU can deschedule itself if there is no activity.

@@ -41,6 +41,7 @@ import os
 import shlex
 
 import m5
+from m5.objects import MemRenamePredictor
 from m5.util import addToPath
 from m5.util.convert import toFrequency
 
@@ -164,6 +165,43 @@ def parse_args():
         help="Garfield: ghost-execute control uops (skip OoO IQ entry, "
         "issue bandwidth, execution port).",
     )
+    parser.add_argument(
+        "--use-mrn",
+        action="store_true",
+        help="Garfield: attach the memory-rename predictor (MRN). When "
+        "absent, MRN stays disabled (NULL).",
+    )
+    parser.add_argument(
+        "--mrn-conf-bits",
+        type=int,
+        default=4,
+        help="MRN confidence-counter width in bits.",
+    )
+    parser.add_argument(
+        "--mrn-conf-threshold",
+        type=int,
+        default=8,
+        help="MRN minimum confidence required to predict.",
+    )
+    parser.add_argument(
+        "--mrn-store-entries",
+        type=int,
+        default=1024,
+        help="MRN store-cache entries.",
+    )
+    parser.add_argument(
+        "--mrn-load-entries",
+        type=int,
+        default=1024,
+        help="MRN load-cache entries.",
+    )
+    parser.add_argument(
+        "--mrn-mode",
+        type=str,
+        default="forward-value",
+        choices=["forward-value", "producer-reg-alias"],
+        help="MRN mode: forward-value (B) or producer-reg-alias (C).",
+    )
     return parser.parse_args()
 
 
@@ -192,6 +230,14 @@ for core in processor.get_cores():
         cpu.max_insts_any_thread = args.max_insts
     cpu.progress_interval = args.progress_interval
     cpu.ghostExec = args.ghost_exec
+    if args.use_mrn:
+        cpu.memRenamePredictor = MemRenamePredictor(
+            confBits=args.mrn_conf_bits,
+            confThreshold=args.mrn_conf_threshold,
+            storeTableEntries=args.mrn_store_entries,
+            loadTableEntries=args.mrn_load_entries,
+            mrnMode=args.mrn_mode.replace("-", "_"),
+        )
 
 board = SimpleBoard(
     clk_freq=args.clk_freq,

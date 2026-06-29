@@ -63,6 +63,8 @@ struct BaseO3CPUParams;
 namespace o3
 {
 
+class MemRenamePredictor;
+
 /**
  * Rename handles both single threaded and SMT rename. Its
  * width is specified by the parameters; each cycle it tries to rename
@@ -326,6 +328,10 @@ class Rename
 
     /** Pointer to CPU. */
     CPU *cpu;
+
+    /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
+     *  unused in this stage until a later task. */
+    MemRenamePredictor *memRenamePred = nullptr;
 
     /** Pointer to main time buffer used for backwards communication. */
     TimeBuffer<TimeStruct> *timeBuffer;

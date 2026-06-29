@@ -191,6 +191,7 @@ class DynInst : public ExecContext, public RefCounted
                      /// execute the instruction
         IsGhost,     /// Garfield: skip OoO IQ entry, issue
                      /// bandwidth, and execution port
+        Mrned,       /// Garfield: load was memory-renamed (MRN)
         MaxFlags
     };
 
@@ -395,6 +396,30 @@ class DynInst : public ExecContext, public RefCounted
     setGhost()
     {
         instFlags[IsGhost] = true;
+    }
+
+    /** Garfield: load was memory-renamed (MRN). */
+    bool
+    isMrned() const
+    {
+        return instFlags[Mrned];
+    }
+    void
+    setMrned()
+    {
+        instFlags[Mrned] = true;
+    }
+
+    /** Garfield: MRN-predicted value snapshotted for this load. */
+    RegVal
+    mrnPredVal() const
+    {
+        return _mrnPredVal;
+    }
+    void
+    setMrnPredVal(RegVal v)
+    {
+        _mrnPredVal = v;
     }
 
     ////////////////////////////////////////////
@@ -1025,6 +1050,9 @@ class DynInst : public ExecContext, public RefCounted
     // hardware transactional memory
     uint64_t htmUid = -1;
     uint64_t htmDepth = 0;
+
+    /** Garfield: MRN-predicted value snapshotted for this load. */
+    RegVal _mrnPredVal = 0;
 
   public:
     // Value -1 indicates that particular phase

@@ -65,6 +65,7 @@ namespace o3
 {
 
 class ThreadState;
+class MemRenamePredictor;
 
 /**
  * Commit handles single threaded and SMT commit. Its width is
@@ -357,6 +358,10 @@ class Commit
   private:
     /** Pointer to O3CPU. */
     CPU *cpu;
+
+    /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
+     *  unused in this stage until a later task. */
+    MemRenamePredictor *memRenamePred = nullptr;
 
     /** Vector of all of the threads. */
     std::vector<ThreadState *> thread;

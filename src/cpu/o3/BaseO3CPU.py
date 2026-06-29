@@ -210,6 +210,9 @@ class BaseO3CPU(BaseCPU):
         ),
         "Branch Predictor",
     )
+    memRenamePredictor = Param.MemRenamePredictor(
+        NULL, "Memory-rename predictor; NULL disables MRN"
+    )
     needsTSO = Param.Bool(False, "Enable TSO Memory model")
 
     recvRespThrottling = Param.Bool(

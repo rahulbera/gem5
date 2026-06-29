@@ -49,6 +49,8 @@ if env['CONF']['BUILD_ISA']:
     SimObject('IQUnit.py', sim_objects=['IQUnit'])
     SimObject('SMT.py',
         enums=['SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
+    SimObject('MemRenamePredictor.py', sim_objects=['MemRenamePredictor'],
+        enums=['MrnMode'])
 
     Source('bac.cc')
     Source('commit.cc')
@@ -65,6 +67,8 @@ if env['CONF']['BUILD_ISA']:
     Source('lsq.cc')
     Source('lsq_unit.cc')
     Source('mem_dep_unit.cc')
+    Source('mem_rename_predictor.cc')
+    Source('mem_rename_predictor_sim.cc')
     Source('regfile.cc')
     Source('rename.cc')
     Source('rename_map.cc')
@@ -75,6 +79,8 @@ if env['CONF']['BUILD_ISA']:
     Source('thread_state.cc')
 
     GTest('ghost_policy.test', 'ghost_policy.test.cc', 'ghost_policy.cc')
+    GTest('mem_rename_predictor.test', 'mem_rename_predictor.test.cc',
+        'mem_rename_predictor.cc', with_tag('gem5 trace'))
 
     DebugFlag('BAC')
     DebugFlag('CommitRate')

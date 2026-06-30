@@ -433,6 +433,11 @@ class PhysRegId : private RegId
     RegIndex flatIdx;
     int numPinnedWritesToComplete;
     bool pinned;
+    /** Garfield MRN: count of live rename-map mappings to this physreg. 1 for
+     *  a normally-renamed dest; >1 when an MRN producer-alias adds a second
+     *  mapping; 0 means free. Gates the free list so an aliased producer is
+     *  released only once all of its mappings are gone. */
+    int refCount = 0;
 
   public:
     explicit PhysRegId() : RegId(invalidRegClass, -1), flatIdx(-1),
@@ -492,6 +497,28 @@ class PhysRegId : private RegId
 
     /** Flat index accessor */
     const RegIndex& flatIndex() const { return flatIdx; }
+
+    /** Garfield MRN reference count (live rename-map mappings; 0 == free). */
+    int
+    getRefCount() const
+    {
+        return refCount;
+    }
+    void
+    setRefCount(int n)
+    {
+        refCount = n;
+    }
+    void
+    incrRefCount()
+    {
+        ++refCount;
+    }
+    int
+    decrRefCount()
+    {
+        return --refCount;
+    }
 
     int getNumPinnedWrites() const { return numPinnedWrites; }
 

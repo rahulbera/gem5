@@ -97,6 +97,8 @@ class SimpleFreeList
         assert(!freeRegs.empty());
         PhysRegIdPtr free_reg = freeRegs.front();
         freeRegs.pop();
+        // Garfield MRN: a freshly allocated physreg has exactly one mapping.
+        free_reg->setRefCount(1);
         return free_reg;
     }
 

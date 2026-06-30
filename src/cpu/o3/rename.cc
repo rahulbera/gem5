@@ -1074,7 +1074,13 @@ Rename::removeFromHistory(InstSeqNum inst_seq_num, ThreadID tid)
         // can be recognized because the new mapping is the same as
         // the old one.
         if (hb_it->newPhysReg != hb_it->prevPhysReg) {
-            freeList->addReg(hb_it->prevPhysReg);
+            // Garfield MRN: release only when the last mapping is gone
+            // (refcount 0). Non-aliased regs go 1->0, identical to the
+            // unconditional free; an MRN-aliased producer survives until
+            // every arch reg that mapped it has been superseded.
+            if (hb_it->prevPhysReg->decrRefCount() == 0) {
+                freeList->addReg(hb_it->prevPhysReg);
+            }
         }
         if (hb_it->prevPhysReg->classValue()== FloatRegClass) {
            ++stats.fpReturned;
@@ -1418,7 +1424,11 @@ Rename::checkSignalsAndUpdate(ThreadID tid)
         auto reg_it = freeingInProgress[tid].cbegin();
         while ( reg_it != freeingInProgress[tid].cend()){
             // Put the renamed physical register back on the free list.
-            freeList->addReg(*reg_it);
+            // Garfield MRN: refcount-gated (1->0 for non-aliased regs; an
+            // aliased producer survives until its other mappings are gone).
+            if ((*reg_it)->decrRefCount() == 0) {
+                freeList->addReg(*reg_it);
+            }
             ++reg_it;
         }
         freeingInProgress[tid].clear();

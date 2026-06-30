@@ -251,6 +251,15 @@ class IEW
         return memRenamePred;
     }
 
+    /** Garfield MRN (mode C): whether a physical register is ready (its
+     *  producer has written back). The LSQ uses this at an aliased load's
+     *  writeback to decide whether to verify now or defer. */
+    bool
+    isRegReady(PhysRegIdPtr phys_reg) const
+    {
+        return scoreboard->getReg(phys_reg);
+    }
+
     /** Sends commit proper information for a squash due to a memory order
      * violation. Public so the LSQ can trigger MRN misprediction recovery
      * (squash from the renamed load inclusive) via its iewStage pointer.

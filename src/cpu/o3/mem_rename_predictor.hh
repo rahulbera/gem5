@@ -81,6 +81,14 @@ class MrnTables
     /** Writeback: reset a load PC's confidence (loop-safety). */
     void mispredict(Addr loadPC);
 
+    /** Correlator (mode C, C.1 lsq_forward): record that a load PC forwarded
+     *  from a store PC (learned at the LSQ store->load forward event). */
+    void trainForward(Addr loadPC, Addr storePC);
+
+    /** Correlator: the store PC most recently bound to this load PC, or 0 if
+     *  none is known. Used at rename to find an in-flight producing store. */
+    Addr predictProducerPC(Addr loadPC);
+
   private:
     struct StoreEntry
     {
@@ -106,6 +114,16 @@ class MrnTables
         uint64_t lru = 0;
     };
 
+    /** Correlator entry (C.1): loadPC -> producing storePC. Set-associative,
+     *  sized and indexed exactly like the load cache. */
+    struct FwdEntry
+    {
+        Addr tag = 0;
+        Addr storePC = 0;
+        bool valid = false;
+        uint64_t lru = 0;
+    };
+
     /** Find the store-cache entry for addr, or nullptr on a miss. */
     StoreEntry *storeFind(Addr addr);
     /** Allocate (LRU-evict within the set) a store-cache entry for addr. */
@@ -116,6 +134,10 @@ class MrnTables
     LoadEntry *loadAllocate(Addr loadPC);
     /** Allocate (LRU-evict) a value-file slot and return its index. */
     int valueAllocate();
+    /** Find the correlator entry for loadPC, or nullptr on a miss. */
+    FwdEntry *fwdFind(Addr loadPC);
+    /** Allocate (LRU-evict within the set) a correlator entry for loadPC. */
+    FwdEntry *fwdAllocate(Addr loadPC);
 
     const unsigned storeSets;
     const unsigned storeAssoc;
@@ -130,6 +152,8 @@ class MrnTables
     std::vector<StoreEntry> storeCache;
     std::vector<LoadEntry> loadCache;
     std::vector<ValueSlot> valueFile;
+    /** Correlator table (C.1), sized/indexed like the load cache. */
+    std::vector<FwdEntry> fwdCache;
 
     /** Monotonic counter used as the LRU timestamp for all structures. */
     uint64_t lruTick = 0;
@@ -187,11 +211,70 @@ class MemRenamePredictor : public SimObject
         stats.predictionsMade++;
     }
 
-    /** Writeback: a forwarded load verified correct. */
+    /** Writeback: a forwarded load verified correct (mode B value path). */
     void
     noteCorrect()
     {
         stats.predictionsCorrect++;
+    }
+
+    /** Rename (mode C): record loadPC->storePC, learned from the LSQ
+     *  store->load forward event. */
+    void
+    trainForward(Addr loadPC, Addr storePC)
+    {
+        stats.bindingsLearned++;
+        tables.trainForward(loadPC, storePC);
+    }
+
+    /** Rename (mode C): the store PC bound to this load PC, or 0 if none.
+     *  store_set correlation is a stub and always returns 0 (no producer). */
+    Addr
+    predictProducerPC(Addr loadPC)
+    {
+        if (_useStoreSet) {
+            return 0;
+        }
+        return tables.predictProducerPC(loadPC);
+    }
+
+    /** Rename: a load was forwarded via the mode-B value snapshot. */
+    void
+    noteForwardValue()
+    {
+        stats.forwardsValue++;
+    }
+
+    /** Rename: a load was aliased to an in-flight producer's physreg (C). */
+    void
+    noteForwardAlias()
+    {
+        stats.forwardsAlias++;
+    }
+
+    /** Writeback: an aliased load verified correct. */
+    void
+    noteAliasCorrect()
+    {
+        stats.aliasVerifyCorrect++;
+    }
+
+    /** Writeback: an aliased load's producer was not yet ready, so the
+     *  verification was deferred until the producer wrote back. */
+    void
+    noteAliasWaited()
+    {
+        stats.aliasVerifyWaitedForProducer++;
+    }
+
+    /** Verify: an aliased load mispredicted; reset confidence and record the
+     *  flush cost (the load plus every younger in-flight inst). */
+    void
+    aliasMispredict(Addr loadPC, uint64_t squashedInsts)
+    {
+        stats.aliasMispredicts++;
+        stats.squashedInsts += squashedInsts;
+        tables.mispredict(loadPC);
     }
 
     /** Whether MRN forwarding is restricted to integer-destination loads. */
@@ -201,9 +284,20 @@ class MemRenamePredictor : public SimObject
         return _predictIntLoadsOnly;
     }
 
+    /** Whether mode C (producer aliasing) is enabled (else value_only/B). */
+    bool
+    unified() const
+    {
+        return _unified;
+    }
+
   private:
     MrnTables tables;
     const bool _predictIntLoadsOnly;
+    /** mrnMode == unified (mode C active, subsumes B). */
+    const bool _unified;
+    /** mrnCorrelation == store_set (stub: predictProducerPC returns 0). */
+    const bool _useStoreSet;
 
     /** Training statistics (Garfield Stage 2, MRN). */
     struct MemRenameStats : public statistics::Group
@@ -223,8 +317,24 @@ class MemRenamePredictor : public SimObject
         statistics::Scalar mispredicts;
         /** Instructions discarded by MRN misprediction squashes (the load
          *  plus all younger in-flight insts): the recovery cost / wasted
-         *  work of the pipe flush. */
+         *  work of the pipe flush. Summed over both the value and alias
+         *  paths. */
         statistics::Scalar squashedInsts;
+        /** High-confidence loads forwarded via the mode-B value snapshot. */
+        statistics::Scalar forwardsValue;
+        /** High-confidence loads aliased to an in-flight producer's physreg
+         *  (mode C). */
+        statistics::Scalar forwardsAlias;
+        /** Aliased loads that verified correct at writeback. */
+        statistics::Scalar aliasVerifyCorrect;
+        /** Aliased loads that verified wrong and forced a squash. */
+        statistics::Scalar aliasMispredicts;
+        /** Aliased loads whose producer was not yet ready at the load's
+         *  writeback, so verification waited for the producer (the mode-C
+         *  ingenuity: the alias bought work the value path could not). */
+        statistics::Scalar aliasVerifyWaitedForProducer;
+        /** loadPC->storePC correlator bindings learned from LSQ forwarding. */
+        statistics::Scalar bindingsLearned;
     } stats;
 };
 

@@ -1072,6 +1072,21 @@ LSQUnit::squash(const InstSeqNum &squashed_num)
         ++stats.squashedStores;
     }
     stats.sqAvgOccupancy = queueOccupancy(storeQueue);
+
+    // Garfield MRN (mode C): drop deferred alias-verify entries for squashed
+    // loads. Their private destination may be freed and they must not be
+    // verified (or trigger a redundant squash) when their producer later
+    // writes back.
+    if (!mrnPendingVerify.empty()) {
+        for (auto it = mrnPendingVerify.begin();
+             it != mrnPendingVerify.end();) {
+            if (it->load->seqNum > squashed_num) {
+                it = mrnPendingVerify.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
 }
 
 uint64_t
@@ -1132,33 +1147,48 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             inst->completeAcc(pkt);
 
             // Garfield MRN: verify a forwarded (memory-renamed) load. After
-            // completeAcc the renamed destination holds the architecturally
-            // correct value; compare it to the value forwarded at rename. On
-            // a mismatch, reset the predictor's confidence and squash from
-            // this load (inclusive) so it and its wrongly-woken dependents
-            // re-execute. On a match the early wakeup was correct.
+            // completeAcc the load's own renamed destination holds the
+            // architecturally correct value. The verify branches on the
+            // forwarding path:
+            //   VALUE (mode B): compare the loaded value to the snapshot
+            //     forwarded at rename, immediately.
+            //   ALIAS (mode C): the load was aliased to an in-flight
+            //     producer's physreg. Verify at MAX(load-resolve,
+            //     producer-resolve): if the producer is already ready, verify
+            //     now; otherwise defer until the producer writes back.
+            // On a mismatch, reset confidence and squash from this load
+            // (inclusive) so it and its wrongly-woken dependents re-execute.
             if (inst->isMrned() && inst->numDestRegs() > 0) {
-                RegVal true_val =
-                    cpu->getReg(inst->renamedDestIdx(0), inst->threadNumber);
-                MemRenamePredictor *mrn = iewStage->getMemRenamePred();
-                if (true_val != inst->mrnPredVal()) {
-                    // Flush cost: the load and every younger in-flight inst is
-                    // squashed (inclusive). globalSeqNum is the next seqNum to
-                    // assign, so (current - load) counts the load plus all
-                    // younger fetched instructions discarded by the squash.
-                    InstSeqNum squashed =
-                        cpu->getCurrentInstSeq() - inst->seqNum;
-                    if (mrn) {
-                        mrn->mispredict(inst->pcState().instAddr(), squashed);
+                if (inst->mrnAliased()) {
+                    mrnCheckAlias(inst);
+                } else {
+                    RegVal true_val = cpu->getReg(inst->renamedDestIdx(0),
+                                                  inst->threadNumber);
+                    MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                    if (true_val != inst->mrnPredVal()) {
+                        // Flush cost: the load and every younger in-flight
+                        // inst is squashed (inclusive). getCurrentInstSeq is
+                        // the next seqNum to assign, so (current - load)
+                        // counts the load plus all younger fetched insts
+                        // discarded by the squash.
+                        InstSeqNum squashed =
+                            cpu->getCurrentInstSeq() - inst->seqNum;
+                        if (mrn) {
+                            mrn->mispredict(inst->pcState().instAddr(),
+                                            squashed);
+                        }
+                        DPRINTF(MRN,
+                                "[tid:%i] [sn:%llu] MRN value mispredict PC "
+                                "%s pred=%#x real=%#x -- squashing %llu "
+                                "insts\n",
+                                inst->threadNumber, inst->seqNum,
+                                inst->pcState(), inst->mrnPredVal(), true_val,
+                                squashed);
+                        iewStage->squashDueToMemOrder(inst,
+                                                      inst->threadNumber);
+                    } else if (mrn) {
+                        mrn->noteCorrect();
                     }
-                    DPRINTF(MRN,
-                            "[tid:%i] [sn:%llu] MRN mispredict PC %s "
-                            "pred=%#x real=%#x -- squashing %llu insts\n",
-                            inst->threadNumber, inst->seqNum, inst->pcState(),
-                            inst->mrnPredVal(), true_val, squashed);
-                    iewStage->squashDueToMemOrder(inst, inst->threadNumber);
-                } else if (mrn) {
-                    mrn->noteCorrect();
                 }
             }
         } else {
@@ -1540,6 +1570,18 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                         "addr %#x\n", store_it._idx,
                         request->mainReq()->getVaddr());
 
+                // Garfield MRN (mode C, C.1 correlator): this load fully
+                // forwarded from this store, so bind loadPC -> storePC. At a
+                // future instance of this load PC, rename can find the
+                // (youngest in-flight) store with this PC and alias the load
+                // to its data physreg. Mode-independent: the binding is
+                // learned regardless of mrnMode (only its use is gated).
+                if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+                    mrn->trainForward(
+                        load_inst->pcState().instAddr(),
+                        store_it->instruction()->pcState().instAddr());
+                }
+
                 PacketPtr data_pkt = new Packet(request->mainReq(),
                         MemCmd::ReadReq);
                 data_pkt->dataStatic(load_inst->memData);
@@ -1723,6 +1765,104 @@ LSQUnit::getStoreHeadSeqNum()
         return storeQueue.front().instruction()->seqNum;
     else
         return 0;
+}
+
+DynInstPtr
+LSQUnit::findYoungestStoreByPC(Addr pc)
+{
+    // Scan the store queue newest -> oldest (end() is one past the youngest;
+    // begin() is the oldest). Return the youngest in-flight store with this
+    // PC so the alias binds to the most recent producer.
+    for (auto it = storeQueue.end(); it != storeQueue.begin();) {
+        --it;
+        if (!it->valid()) {
+            continue;
+        }
+        const DynInstPtr &st = it->instruction();
+        if (st && st->pcState().instAddr() == pc) {
+            return st;
+        }
+    }
+    return nullptr;
+}
+
+void
+LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
+{
+    if (load->isSquashed()) {
+        return;
+    }
+    MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+    PhysRegIdPtr producer = load->mrnAliasProducer();
+
+    // The load's own private destination (renamedDestIdx(0)) holds the
+    // architecturally-correct loaded value after completeAcc; the predicted
+    // value is the producer physreg's current value.
+    RegVal true_val = cpu->getReg(load->renamedDestIdx(0), load->threadNumber);
+    RegVal pred_val = cpu->getReg(producer, load->threadNumber);
+
+    if (true_val != pred_val) {
+        // Flush cost: the load and every younger in-flight inst (inclusive).
+        InstSeqNum squashed = cpu->getCurrentInstSeq() - load->seqNum;
+        if (mrn) {
+            mrn->aliasMispredict(load->pcState().instAddr(), squashed);
+        }
+        DPRINTF(MRN,
+                "[tid:%i] [sn:%llu] MRN alias mispredict PC %s pred=%#x "
+                "real=%#x (producer phys %i) -- squashing %llu insts\n",
+                load->threadNumber, load->seqNum, load->pcState(), pred_val,
+                true_val, producer->index(), squashed);
+        iewStage->squashDueToMemOrder(load, load->threadNumber);
+    } else {
+        if (mrn) {
+            mrn->noteAliasCorrect();
+        }
+        DPRINTF(MRN,
+                "[tid:%i] [sn:%llu] MRN alias verified PC %s val=%#x "
+                "(producer phys %i)\n",
+                load->threadNumber, load->seqNum, load->pcState(), true_val,
+                producer->index());
+    }
+}
+
+void
+LSQUnit::mrnCheckAlias(const DynInstPtr &load)
+{
+    PhysRegIdPtr producer = load->mrnAliasProducer();
+    assert(producer);
+    if (iewStage->isRegReady(producer)) {
+        // Producer has written back: verify against its value now.
+        mrnVerifyAlias(load);
+    } else {
+        // Verify at MAX(load-resolve, producer-resolve): defer until the
+        // producer writes back, which drains this list (mrnProducerWroteBack).
+        mrnPendingVerify.push_back({load, producer});
+        if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+            mrn->noteAliasWaited();
+        }
+        DPRINTF(MRN,
+                "[tid:%i] [sn:%llu] MRN alias deferred PC %s waiting on "
+                "producer phys %i\n",
+                load->threadNumber, load->seqNum, load->pcState(),
+                producer->index());
+    }
+}
+
+void
+LSQUnit::mrnProducerWroteBack(PhysRegIdPtr producer)
+{
+    if (mrnPendingVerify.empty()) {
+        return;
+    }
+    for (auto it = mrnPendingVerify.begin(); it != mrnPendingVerify.end();) {
+        if (it->producer == producer) {
+            DynInstPtr load = it->load;
+            it = mrnPendingVerify.erase(it);
+            mrnVerifyAlias(load); // skips squashed loads internally
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace o3

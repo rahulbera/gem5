@@ -198,9 +198,20 @@ def parse_args():
     parser.add_argument(
         "--mrn-mode",
         type=str,
-        default="forward-value",
-        choices=["forward-value", "producer-reg-alias"],
-        help="MRN mode: forward-value (B) or producer-reg-alias (C).",
+        default="value-only",
+        choices=["value-only", "unified"],
+        help="MRN mode: value-only (mode B value snapshot only) or unified "
+        "(mode C, which subsumes B: alias to an in-flight producer's physreg "
+        "when found, else fall back to the B value snapshot).",
+    )
+    parser.add_argument(
+        "--mrn-correlation",
+        type=str,
+        default="lsq-forward",
+        choices=["lsq-forward", "store-set"],
+        help="Producer-binding source for unified mode: lsq-forward "
+        "(loadPC->storePC learned from LSQ forwarding) or store-set (stub: "
+        "no producer found).",
     )
     parser.add_argument(
         "--mrn-allow-nonint",
@@ -244,6 +255,7 @@ for core in processor.get_cores():
             storeTableEntries=args.mrn_store_entries,
             loadTableEntries=args.mrn_load_entries,
             mrnMode=args.mrn_mode.replace("-", "_"),
+            mrnCorrelation=args.mrn_correlation.replace("-", "_"),
             predictIntLoadsOnly=not args.mrn_allow_nonint,
         )
 

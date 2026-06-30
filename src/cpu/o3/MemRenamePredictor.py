@@ -4,7 +4,17 @@ from m5.SimObject import SimObject
 
 
 class MrnMode(Enum):
-    vals = ["forward_value", "producer_reg_alias"]
+    # value_only = mode B alone (value snapshot forwarding). unified = C >= B:
+    # alias to an in-flight producer's physreg when one is found, else fall
+    # back to the mode-B value snapshot.
+    vals = ["value_only", "unified"]
+
+
+class MrnCorrelation(Enum):
+    # How the unified predictor finds a load's producing store. lsq_forward
+    # learns loadPC->storePC bindings from the LSQ store->load forward event;
+    # store_set is a stub (treated as "no producer found").
+    vals = ["lsq_forward", "store_set"]
 
 
 class MemRenamePredictor(SimObject):
@@ -46,5 +56,14 @@ class MemRenamePredictor(SimObject):
         "load will panic.",
     )
     mrnMode = Param.MrnMode(
-        "forward_value", "forward_value (B) | producer_reg_alias (C)"
+        "value_only",
+        "value_only (mode B value snapshot only) | unified (mode C, which "
+        "subsumes B: alias to an in-flight producer's physreg when found, "
+        "else fall back to the B value snapshot).",
+    )
+    mrnCorrelation = Param.MrnCorrelation(
+        "lsq_forward",
+        "Producer-binding source for the unified predictor: lsq_forward "
+        "(loadPC->storePC learned from LSQ forwarding) | store_set (stub, "
+        "treated as no producer found).",
     )

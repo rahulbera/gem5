@@ -422,6 +422,58 @@ class DynInst : public ExecContext, public RefCounted
         _mrnPredVal = v;
     }
 
+    /** Garfield: which MRN forwarding path this load took. NONE = not
+     *  forwarded; VALUE = mode-B value snapshot (verify vs mrnPredVal);
+     *  ALIAS = mode-C producer-register alias (verify vs the producer
+     *  physreg's value). */
+    enum MrnPath
+    {
+        MrnNone = 0,
+        MrnValue,
+        MrnAlias
+    };
+    MrnPath
+    mrnPath() const
+    {
+        return _mrnPath;
+    }
+    void
+    setMrnPath(MrnPath p)
+    {
+        _mrnPath = p;
+    }
+    bool
+    mrnAliased() const
+    {
+        return _mrnPath == MrnAlias;
+    }
+
+    /** Garfield (mode C): the in-flight producer's physreg this load is
+     *  aliased to. Its value is the prediction verified at writeback. */
+    PhysRegIdPtr
+    mrnAliasProducer() const
+    {
+        return _mrnAliasProducer;
+    }
+    void
+    setMrnAliasProducer(PhysRegIdPtr p)
+    {
+        _mrnAliasProducer = p;
+    }
+
+    /** Garfield (mode C): sequence number of the producing store (debug /
+     *  verify timing). */
+    InstSeqNum
+    mrnProducerSeq() const
+    {
+        return _mrnProducerSeq;
+    }
+    void
+    setMrnProducerSeq(InstSeqNum sn)
+    {
+        _mrnProducerSeq = sn;
+    }
+
     ////////////////////////////////////////////
     //
     // INSTRUCTION EXECUTION
@@ -1053,6 +1105,15 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield: MRN-predicted value snapshotted for this load. */
     RegVal _mrnPredVal = 0;
+
+    /** Garfield: MRN forwarding path taken by this load. */
+    MrnPath _mrnPath = MrnNone;
+
+    /** Garfield (mode C): the in-flight producer physreg this load aliases. */
+    PhysRegIdPtr _mrnAliasProducer = nullptr;
+
+    /** Garfield (mode C): producing store's sequence number. */
+    InstSeqNum _mrnProducerSeq = 0;
 
   public:
     // Value -1 indicates that particular phase

@@ -44,7 +44,8 @@ MrnTables::MrnTables(const MrnConfig &cfg)
       resetConfOnMispredict(cfg.resetConfOnMispredict),
       storeCache(storeSets * storeAssoc),
       loadCache(loadSets * loadAssoc),
-      valueFile(atLeastOne(cfg.valueFileEntries))
+      valueFile(atLeastOne(cfg.valueFileEntries)),
+      fwdCache(loadSets * loadAssoc)
 {}
 
 MrnTables::StoreEntry *
@@ -206,6 +207,64 @@ MrnTables::mispredict(Addr loadPC)
     if (le) {
         le->conf = 0;
     }
+}
+
+MrnTables::FwdEntry *
+MrnTables::fwdFind(Addr loadPC)
+{
+    const unsigned set = static_cast<unsigned>(loadPC % loadSets);
+    const unsigned firstWay = set * loadAssoc;
+    for (unsigned w = 0; w < loadAssoc; ++w) {
+        FwdEntry &e = fwdCache[firstWay + w];
+        if (e.valid && e.tag == loadPC) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+MrnTables::FwdEntry *
+MrnTables::fwdAllocate(Addr loadPC)
+{
+    const unsigned set = static_cast<unsigned>(loadPC % loadSets);
+    const unsigned firstWay = set * loadAssoc;
+    FwdEntry *victim = &fwdCache[firstWay];
+    for (unsigned w = 0; w < loadAssoc; ++w) {
+        FwdEntry &e = fwdCache[firstWay + w];
+        if (!e.valid) {
+            victim = &e;
+            break;
+        }
+        if (e.lru < victim->lru) {
+            victim = &e;
+        }
+    }
+    victim->valid = true;
+    victim->tag = loadPC;
+    victim->storePC = 0;
+    return victim;
+}
+
+void
+MrnTables::trainForward(Addr loadPC, Addr storePC)
+{
+    FwdEntry *e = fwdFind(loadPC);
+    if (!e) {
+        e = fwdAllocate(loadPC);
+    }
+    e->storePC = storePC;
+    e->lru = ++lruTick;
+}
+
+Addr
+MrnTables::predictProducerPC(Addr loadPC)
+{
+    FwdEntry *e = fwdFind(loadPC);
+    if (e && e->valid) {
+        e->lru = ++lruTick;
+        return e->storePC;
+    }
+    return 0;
 }
 
 } // namespace o3

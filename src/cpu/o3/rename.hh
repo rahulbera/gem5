@@ -257,6 +257,14 @@ class Rename
     /** Renames the destination registers of an instruction. */
     void renameDestRegs(const DynInstPtr &inst, ThreadID tid);
 
+    /** Garfield MRN (mode C): if this confident load has an in-flight
+     *  producing store whose integer data physreg can be safely aliased,
+     *  stash that producer on the instruction and return true. The actual
+     *  map surgery happens in renameDestRegs. Returns false (fall back to the
+     *  mode-B value path) when not unified, not a simple int load, no
+     *  producer is found, or the producer reg is unsuitable. */
+    bool tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid);
+
     /** Should we SerializeBefore the current instruction */
     void handleMiscRegWaW(DynInstPtr &inst, ThreadID tid);
 
@@ -302,11 +310,29 @@ class Rename
      */
     struct RenameHistory
     {
-        RenameHistory(InstSeqNum _instSeqNum, const RegId& _archReg,
-                      PhysRegIdPtr _newPhysReg,
-                      PhysRegIdPtr _prevPhysReg)
-            : instSeqNum(_instSeqNum), archReg(_archReg),
-              newPhysReg(_newPhysReg), prevPhysReg(_prevPhysReg)
+        RenameHistory(InstSeqNum _instSeqNum, const RegId &_archReg,
+                      PhysRegIdPtr _newPhysReg, PhysRegIdPtr _prevPhysReg)
+            : instSeqNum(_instSeqNum),
+              archReg(_archReg),
+              newPhysReg(_newPhysReg),
+              prevPhysReg(_prevPhysReg),
+              aliased(false),
+              aliasLoadReg(nullptr)
+        {}
+
+        /** Garfield MRN (mode C): aliasing rename. The arch reg is pointed at
+         *  an in-flight producer's physreg (newPhysReg = the shared producer
+         *  P), and aliasLoadReg is the private physreg the aliased load
+         *  actually writes (for verification). */
+        RenameHistory(InstSeqNum _instSeqNum, const RegId &_archReg,
+                      PhysRegIdPtr _newPhysReg, PhysRegIdPtr _prevPhysReg,
+                      bool _aliased, PhysRegIdPtr _aliasLoadReg)
+            : instSeqNum(_instSeqNum),
+              archReg(_archReg),
+              newPhysReg(_newPhysReg),
+              prevPhysReg(_prevPhysReg),
+              aliased(_aliased),
+              aliasLoadReg(_aliasLoadReg)
         {
         }
 
@@ -319,6 +345,15 @@ class Rename
         /** The old physical register that the arch. register was renamed to.
          */
         PhysRegIdPtr prevPhysReg;
+        /** Garfield MRN: this rename aliased the arch reg to a shared
+         *  producer physreg (newPhysReg) rather than allocating a fresh one.
+         *  newPhysReg must not be returned to the free list or marked ready
+         *  on squash on this entry's behalf; only its refcount is dropped. */
+        bool aliased;
+        /** Garfield MRN: for an aliased load, the private physreg the load
+         *  itself writes (and is verified from). It is freed at commit or
+         *  squash like a normal dest; the map never points at it. */
+        PhysRegIdPtr aliasLoadReg;
     };
 
     /** A per-thread list of all destination register renames, used to either

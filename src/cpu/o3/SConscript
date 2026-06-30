@@ -50,7 +50,7 @@ if env['CONF']['BUILD_ISA']:
     SimObject('SMT.py',
         enums=['SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
     SimObject('MemRenamePredictor.py', sim_objects=['MemRenamePredictor'],
-        enums=['MrnMode'])
+        enums=['MrnMode', 'MrnCorrelation'])
 
     Source('bac.cc')
     Source('commit.cc')

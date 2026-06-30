@@ -13,6 +13,8 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
                        p.valueFileEntries, p.confBits, p.confThreshold,
                        p.confInc, p.confDec, p.resetConfOnMispredict}),
       _predictIntLoadsOnly(p.predictIntLoadsOnly),
+      _unified(p.mrnMode == enums::unified),
+      _useStoreSet(p.mrnCorrelation == enums::store_set),
       stats(this)
 {}
 
@@ -31,7 +33,23 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(mispredicts, statistics::units::Count::get(),
                "Forwarded MRN loads that verified wrong and forced a squash"),
       ADD_STAT(squashedInsts, statistics::units::Count::get(),
-               "Instructions discarded by MRN misprediction squashes")
+               "Instructions discarded by MRN misprediction squashes"),
+      ADD_STAT(forwardsValue, statistics::units::Count::get(),
+               "High-confidence loads forwarded via the mode-B value "
+               "snapshot"),
+      ADD_STAT(forwardsAlias, statistics::units::Count::get(),
+               "High-confidence loads aliased to an in-flight producer's "
+               "physreg (mode C)"),
+      ADD_STAT(aliasVerifyCorrect, statistics::units::Count::get(),
+               "Aliased loads that verified correct at writeback"),
+      ADD_STAT(aliasMispredicts, statistics::units::Count::get(),
+               "Aliased loads that verified wrong and forced a squash"),
+      ADD_STAT(aliasVerifyWaitedForProducer, statistics::units::Count::get(),
+               "Aliased loads whose producer was not ready at writeback, so "
+               "verification waited for the producer"),
+      ADD_STAT(bindingsLearned, statistics::units::Count::get(),
+               "loadPC->storePC correlator bindings learned from LSQ "
+               "forwarding")
 {}
 
 } // namespace o3

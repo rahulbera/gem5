@@ -139,6 +139,8 @@ MiscRegImmOp64::miscRegImm() const
         return (imm & 0x1) << 22;
       case MISCREG_UAO:
         return (imm & 0x1) << 23;
+      case MISCREG_DIT:
+        return (imm & 0x1) << 24;
       default:
         panic("Not a valid PSTATE field register\n");
     }

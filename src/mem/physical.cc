@@ -44,11 +44,14 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "base/intmath.hh"
 #include "base/trace.hh"
@@ -462,12 +465,58 @@ PhysicalMemory::unserializeStore(CheckpointIn &cp)
         fatal("Memory range size has changed! Saw %lld, expected %lld\n",
               range_size, range.size());
 
+    // Sparse restore: only materialize what the checkpoint actually contains.
+    //
+    // The backing store is a fresh mapping that already reads as zero
+    // (MAP_ANON|MAP_PRIVATE, or a freshly ftruncate'd shm) whose pages have not
+    // been faulted in yet. Decompressing straight into it writes every byte of
+    // the range, so a restore's RSS ends up equal to mem_size regardless of how
+    // little the guest used -- a 16GiB checkpoint cost ~16.9GB RSS even though
+    // the guest had only ever touched ~2.4GiB. That caps how many restores fit
+    // in RAM and inflates the memory a cluster job must request.
+    //
+    // Instead, inflate into a staging buffer and only write chunks that carry
+    // data. All-zero chunks are dropped with MADV_DONTNEED, which restores
+    // zero-fill-on-demand on an anonymous mapping, so the resulting memory image
+    // is byte-identical while RSS becomes the checkpoint's real footprint.
+    std::vector<uint8_t> chunk_buf(chunk_size);
     uint64_t curr_size = 0;
     uint32_t bytes_read;
     while (curr_size < range.size()) {
-        bytes_read = gzread(compressed_mem, pmem, chunk_size);
+        bytes_read = gzread(compressed_mem, chunk_buf.data(), chunk_size);
         if (bytes_read == 0)
             break;
+
+        const bool has_data =
+            std::any_of(chunk_buf.begin(), chunk_buf.begin() + bytes_read,
+                        [](uint8_t b) { return b != 0; });
+
+        if (has_data) {
+            std::memcpy(pmem, chunk_buf.data(), bytes_read);
+        } else if (sharedBackstore.empty()) {
+            // Anonymous mapping: drop whole pages (they read back as zero) and
+            // zero any unaligned edges explicitly, so this stays exact even if
+            // the store was not pristine.
+            uint8_t *s = pmem;
+            uint8_t *e = pmem + bytes_read;
+            uint8_t *as = (uint8_t *)roundUp((uintptr_t)s, pageSize);
+            uint8_t *ae = (uint8_t *)roundDown((uintptr_t)e, pageSize);
+            if (as > e)
+                as = e;
+            if (ae < as)
+                ae = as;
+            if (as > s)
+                std::memset(s, 0, as - s);
+            if (ae > as)
+                madvise(as, ae - as, MADV_DONTNEED);
+            if (e > ae)
+                std::memset(ae, 0, e - ae);
+        } else {
+            // Shared backstore: MADV_DONTNEED would re-read the file rather
+            // than guarantee zero, so write the zeros explicitly.
+            std::memset(pmem, 0, bytes_read);
+        }
+
         curr_size += bytes_read;
         pmem += bytes_read;
     }

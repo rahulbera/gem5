@@ -510,15 +510,19 @@ class Pl011(Uart):
         # Hardcoded reference to the realview platform clocks, because the
         # clk_domain can only store one clock (i.e. it is not a VectorParam)
         realview = self._parent.unproxy(self)
-        node.append(
-            FdtPropertyWords(
-                "clocks",
-                [
-                    state.phandle(realview.mcc.osc_peripheral),
-                    state.phandle(realview.dcc.osc_smb),
-                ],
-            )
-        )
+        if hasattr(realview, "mcc"):
+            clocks = [
+                state.phandle(realview.mcc.osc_peripheral),
+                state.phandle(realview.dcc.osc_smb),
+            ]
+        else:
+            # Platforms without VExpress motherboard/daughterboard models
+            # (e.g. QEMU_Virt) expose a fixed reference clock instead.
+            clocks = [
+                state.phandle(realview.fixed_clock24MHz),
+                state.phandle(realview.fixed_clock24MHz),
+            ]
+        node.append(FdtPropertyWords("clocks", clocks))
         node.append(FdtPropertyStrings("clock-names", ["uartclk", "apb_pclk"]))
         yield node
 
@@ -607,7 +611,14 @@ class PL031(AmbaIntDevice):
         )
 
         node.appendCompatible(["arm,pl031", "arm,primecell"])
-        clock = state.phandle(self.clk_domain.unproxy(self))
+        realview = self._parent.unproxy(self)
+        if hasattr(realview, "fixed_clock24MHz"):
+            # The clk_domain phandle below only resolves to a real DT node
+            # for FixedClock domains; prefer the platform's fixed clock
+            # when it has one (e.g. QEMU_Virt).
+            clock = [state.phandle(realview.fixed_clock24MHz)]
+        else:
+            clock = state.phandle(self.clk_domain.unproxy(self))
         node.append(FdtPropertyWords("clocks", clock))
         node.append(FdtPropertyStrings("clock-names", ["apb_pclk"]))
 
@@ -1767,3 +1778,151 @@ class VExpress_GEM5_Foundation(VExpress_GEM5_Base):
         if boot_loader is None:
             boot_loader = [loc("boot_foundation.arm64")]
         super().setupBootLoader(cur_sys, boot_loader)
+
+
+class QEMU_Virt(RealView):
+    """
+    Minimal model of QEMU's `-machine virt,gic-version=3` (highmem=on), so
+    that QPoints QEMU->gem5 checkpoints restore onto an identical
+    memory/device map, and so gem5 can take native reference checkpoints
+    with the exact same physmem store layout. Ported from bgodala's
+    gem5_ARM_FDIP QEMU_Virt (2021 gem5) onto the 25.1 device API.
+
+    Memory map (QEMU hw/arm/virt.c):
+       0x00000000-0x03ffffff: flash bank 0 (UEFI code; modeled as plain
+                              memory -- the first QPoints physmem store)
+       0x08000000-0x0800ffff: GICv3 distributor
+       0x080a0000-0x08f5ffff: GICv3 redistributors
+       0x09000000: PL011 UART (SPI  1 -> num 33)
+       0x09010000: PL031 RTC  (SPI  2 -> num 34)
+       0x0a000000-0x0a003fff: 32 virtio-mmio slots (slot n: SPI 16+n).
+                  QEMU assigns the first -device to the HIGHEST slot, so
+                  only slot 31 (0x0a003e00, SPI 47 -> num 79) is modeled:
+                  the QPoints guest's virtio-blk disk.
+       0x10000000-0x3efeffff: PCI mem window (low)
+       0x3eff0000-0x3effffff: PCI PIO window
+       0x40000000-          : DRAM
+       0x4010000000-        : PCIe ECAM (256MiB)
+       0x8000000000-        : PCI mem window (high)
+
+    Deliberately not modeled (absent from the QPoints QEMU launch, or not
+    touched by the guest after boot): flash bank 1 (UEFI varstore), fw-cfg,
+    GPIO, secure devices, SMMU, and the GICv3 ITS (needed for PCI MSIs
+    only; the QPoints guest uses a virtio-mmio disk and -nic none).
+    """
+
+    _mem_regions = [AddrRange(0x40000000, size="32GiB")]
+
+    _off_chip_ranges = [
+        AddrRange(0x09000000, size=0x1000),  # PL011
+        AddrRange(0x09010000, size=0x1000),  # PL031
+        AddrRange(0x0A003E00, size=0x200),  # virtio-mmio slot 31
+        AddrRange(0x10000000, 0x3F000000),  # PCI mem (low) + PIO
+        AddrRange(0x4010000000, size="256MiB"),  # PCIe ECAM
+        AddrRange(0x8000000000, size="512GiB"),  # PCI mem (high)
+    ]
+
+    # QEMU virt flash bank 0. QPoints dumps it as its first (lowest-address)
+    # physmem store; modeling it as plain memory keeps the restore-time
+    # store list identical.
+    bootmem = SimpleMemory(
+        range=AddrRange(0, size="64MiB"), conf_table_reported=False
+    )
+
+    # kvm_gicv3_class resolves to MuxingKvmGicV3 on builds with KVM support
+    # (enables KVM fast-boot on GICv3 hosts), plain Gicv3 otherwise.
+    # it_lines: QEMU virt has 256 SPIs -> 288 interrupt lines. This both
+    # matches the GIC state a QPoints checkpoint carries and satisfies the
+    # in-kernel vGIC (KVM requires a multiple of 32; the gem5 default 1020
+    # is rejected with EINVAL).
+    gic = kvm_gicv3_class(
+        dist_addr=0x08000000,
+        redist_addr=0x080A0000,
+        maint_int=ArmPPI(num=25),
+        gicv4=False,
+        its=NULL,
+        it_lines=288,
+    )
+
+    # QEMU TCG advertises CNTFRQ = 62.5MHz on the virt machine; keep the
+    # system counter consistent with what a QPoints (TCG) guest saw.
+    sys_counter = SystemCounter(freqs=[62500000])
+    generic_timer = GenericTimer(
+        int_el3_phys=ArmPPI(num=29, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el1_phys=ArmPPI(num=30, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el1_virt=ArmPPI(num=27, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el2_ns_phys=ArmPPI(num=26, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el2_ns_virt=ArmPPI(num=28, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el2_s_phys=ArmPPI(num=20, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        int_el2_s_virt=ArmPPI(num=19, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        cntfrq=62500000,
+    )
+
+    uart = Pl011(pio_addr=0x09000000, interrupt=ArmSPI(num=33))
+    rtc = PL031(pio_addr=0x09010000, interrupt=ArmSPI(num=34))
+
+    vio = [
+        MmioVirtIO(
+            pio_addr=0x0A003E00,
+            pio_size=0x200,
+            interrupt=ArmSPI(num=79, int_type="IRQ_TYPE_LEVEL_HIGH"),
+        )
+    ]
+
+    pci_host = GenericArmPciHost(
+        conf_base=0x4010000000,
+        conf_size="256MiB",
+        conf_device_bits=12,
+        pci_pio_base=0x3EFF0000,
+        pci_mem_base=0x10000000,
+        int_policy="ARM_PCI_INT_DEV",
+        int_base=35,
+        int_count=4,
+    )
+    pci_bus = PciBus()
+
+    io_voltage = VoltageDomain(voltage="3.3V")
+    fixed_clock24MHz = FixedClock(clock="24MHz")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.fixed_clock24MHz.voltage_domain = self.io_voltage
+        # QEMU virt sizes the redistributor region so it ends exactly at
+        # the PL011 (0x080a0000 + 0xf60000 == 0x09000000); gem5's default
+        # DT size (32MiB) would claim the UART and virtio-mmio regions.
+        self.gic._dt_redist_size = 0x00F60000
+
+    def _on_chip_devices(self):
+        return [self.gic]
+
+    def _on_chip_memory(self):
+        return [self.bootmem]
+
+    def _off_chip_devices(self):
+        return [self.uart, self.rtc, self.fixed_clock24MHz] + self.vio
+
+    def attachPciDevice(self, device):
+        self._num_pci_dev += 1
+        device.pci_dev = self._num_pci_dev
+        device.pci_func = 0
+        self._attach_pci_device(device, self.pci_host, self.pci_bus)
+
+    def _attach_pci(self, devices, bus, dma_ports=None):
+        self.pci_bus.cpu_side_ports = self.pci_host.down_request_port()
+        self.pci_bus.default = self.pci_host.down_response_port()
+        self.pci_bus.config_error_port = self.pci_host.config_error.pio
+
+        bus.mem_side_ports = self.pci_host.up_response_port()
+        if dma_ports is None:
+            bus.cpu_side_ports = self.pci_host.up_request_port()
+        else:
+            dma_ports.append(self.pci_host.up_request_port())
+
+        for d in devices:
+            self._attach_pci_device(d, self.pci_host, self.pci_bus)
+
+    def setupBootLoader(self, cur_sys, loc, boot_loader=None):
+        if boot_loader is None:
+            boot_loader = loc("boot_v2_qemu_virt.arm64")
+        # DTB at RAM base + 128MiB; kernel load offset = RAM base.
+        super().setupBootLoader(cur_sys, boot_loader, 0x8000000, 0x40000000)

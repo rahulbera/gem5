@@ -42,7 +42,8 @@ LDFLAGS = -N -Ttext 0x00000010 -static
 all: mkdir $(BUILDDIR)/boot_emm.arm64 \
 	$(BUILDDIR)/boot.arm64  \
 	$(BUILDDIR)/boot_v2.arm64 \
-	$(BUILDDIR)/boot_foundation.arm64
+	$(BUILDDIR)/boot_foundation.arm64 \
+	$(BUILDDIR)/boot_v2_qemu_virt.arm64
 
 #v1 has a GIC V2
 $(BUILDDIR)/boot_emm.o: CPPFLAGS += -UGICV3 -DGIC_CPU_BASE=0x2c002000 \
@@ -57,6 +58,11 @@ $(BUILDDIR)/boot_v2.o: CPPFLAGS += -DGICV3 -DGIC_REDIST_BASE=0x2c010000 \
 #Foundation has a GIC V3
 $(BUILDDIR)/boot_foundation.o: CPPFLAGS += -DGICV3 -DGIC_REDIST_BASE=0x2f100000 \
 	-DGIC_DIST_BASE=0x2f000000
+
+#QEMU virt has a GIC V3; no V2M sysregs (SYSREGS_BASE deliberately undefined,
+#which compiles out the CLCD pokes -- there is nothing at that address on virt)
+$(BUILDDIR)/boot_v2_qemu_virt.o: CPPFLAGS = -DGICV3 -DGIC_REDIST_BASE=0x80a0000 \
+	-DGIC_DIST_BASE=0x8000000 -DUART_BASE=0x9000000
 
 $(BUILDDIR)/%.arm64: $(BUILDDIR)/%.o
 	$(LD) -o $@ $< $(LDFLAGS)

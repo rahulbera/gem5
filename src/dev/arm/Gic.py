@@ -356,11 +356,15 @@ class Gicv3(BaseGic):
             )
         )
 
+        # Platforms whose memory map leaves less than the default 32MiB
+        # after redist_addr (e.g. QEMU_Virt, where the PL011 sits at
+        # redist_addr + 0xf60000) can shrink the advertised region by
+        # setting _dt_redist_size on the gic instance.
         regs = (
             state.addrCells(self.dist_addr)
             + state.sizeCells(0x10000)
             + state.addrCells(self.redist_addr)
-            + state.sizeCells(0x2000000)
+            + state.sizeCells(getattr(self, "_dt_redist_size", 0x2000000))
         )
 
         node.append(FdtPropertyWords("reg", regs))

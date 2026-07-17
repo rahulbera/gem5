@@ -1403,7 +1403,7 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
         // the normal lifetime rule (this commit frees the previous mapping;
         // P persists until the next writer of this reg commits) and never
         // points at the reclaimed L.
-        if (head_inst->isMrnAliased() && i == 0) {
+        if (head_inst->mrnAliased() && i == 0) {
             arch_phys = head_inst->mrnAliasProducer();
         }
         renameMap[tid]->setEntry(head_inst->flattenedDestIdx(i), arch_phys);

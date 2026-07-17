@@ -142,6 +142,10 @@ SimObject::serializeAll(const std::string &cpt_dir)
         // This works despite name() returning a fully qualified name
         // since we are at the top level.
         obj->serializeSection(cp, obj->name());
+        // A failed stream otherwise truncates m5.cpt SILENTLY and the
+        // checkpoint "succeeds" -- surface it, and name the culprit.
+        fatal_if(!cp, "Checkpoint stream failed while serializing %s "
+                 "(m5.cpt would be silently truncated)", obj->name());
    }
 }
 

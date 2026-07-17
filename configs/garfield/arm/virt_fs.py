@@ -106,10 +106,21 @@ def create(args):
     MemConfig.config_mem(args, system)
 
     # The disk is the QEMU-virt virtio-mmio slot 31 device (see QEMU_Virt).
+    # queueSize must equal the ring size the GUEST negotiated under QEMU.
+    # That is 1024 -- NOT QEMU's virtio-blk queue-size property (256):
+    # QEMU's legacy virtio-mmio transport reports QueueNumMax=1024
+    # (VIRTQUEUE_MAX_SIZE) regardless of the device property, the guest
+    # driver takes it, and QEMU resizes the vring. The legacy avail/used
+    # ring offsets are functions of the queue size, so a mismatch makes
+    # gem5 parse a restored guest's ring at the wrong addresses (symptom:
+    # "Unsupported IO request" with garbage types, or a crash in
+    # consumeDescriptor). Verified against the memory dump: with the
+    # 1024-entry layout avail.idx == used.idx == the dumped _last_avail.
     system.realview.vio[0].vio = VirtIOBlock(
         image=CowDiskImage(
             child=RawDiskImage(image_file=args.disk_image), read_only=False
-        )
+        ),
+        queueSize=1024,
     )
 
     # m5ops via memory-mapped range (needed under KVM, and used by the

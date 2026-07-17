@@ -246,6 +246,17 @@ FsLinux::startup()
              "`oops_exit` symbol not found.");
     }
 
+    if (kernelSymtab.empty()) {
+        // A checkpoint restored without kernel symbols (e.g. a QPoints
+        // QEMU-snapshot conversion, where the guest's vmlinux is not
+        // available and hooking a DIFFERENT kernel's addresses would
+        // corrupt the guest). Without symbols the udelay skip events
+        // cannot be installed; the guest's delay loops simply execute.
+        warn("Kernel symbol table is empty; not installing udelay skip "
+             "events (delay loops will be simulated in full).");
+        return;
+    }
+
     // With ARM udelay() is #defined to __udelay
     // newer kernels use __loop_udelay and __loop_const_udelay symbols
     skipUDelay = addSkipFunc<SkipUDelay>(

@@ -47,6 +47,7 @@ from pathlib import Path
 
 import m5
 from m5.objects import (
+    ArmDefaultRelease,
     Armv8,
     CowDiskImage,
     FetchDirectedPrefetcher,
@@ -305,12 +306,20 @@ memory = MEM_FACTORIES[args.mem_type](size=args.mem_size)
 
 detailed_core = make_neoverse_v2_core()
 
-cache = RestoreNeoverseV2CacheHierarchy(
-    detailed_core,
-    enable_fdp=not args.disable_fdp,
-    enable_l1d_prefetch=not args.disable_l1d_prefetch,
-    enable_l2_prefetch=not args.disable_l2_prefetch,
-)
+if args.gen_ref:
+    # Reference generation: cacheless (fast atomic boot; restores
+    # tolerate absent cache sections -- Track A precedent: KVM-generated
+    # cacheless checkpoints restore into the full NeoverseV2 hierarchy).
+    from gem5.components.cachehierarchies.classic.no_cache import NoCache
+
+    cache = NoCache()
+else:
+    cache = RestoreNeoverseV2CacheHierarchy(
+        detailed_core,
+        enable_fdp=not args.disable_fdp,
+        enable_l1d_prefetch=not args.disable_l1d_prefetch,
+        enable_l2_prefetch=not args.disable_l2_prefetch,
+    )
 
 processor = NeoverseV2RestoreProcessor(detailed_core, make_atomic_core())
 
@@ -319,12 +328,13 @@ board = QemuVirtBoard(
     processor=processor,
     memory=memory,
     cache_hierarchy=cache,
-    # Match the QEMU-TCG cortex-a57 feature envelope (v8.0 + crypto):
-    # a restore CPU with MORE features than the snapshot CPU executes
-    # HINT-space instructions (PACIASP/AUTIASP, BTI) the guest stored as
-    # NOPs -- the PAuth poison found at Gate 1. Revisit for KVM-mode
-    # snapshots (Gate 3), where the envelope is the HOST's.
-    release=Armv8(),
+    # Restores of TCG snapshots: the cortex-a57 envelope (Armv8 =
+    # v8.0 + crypto). MORE features than the snapshot CPU = live
+    # HINT-space instructions on unsigned state (the PAuth poison);
+    # FEWER-but-advertised = enable-time faults (the SME/FA64 panic:
+    # gem5's Armv8 release does not scrub SME ID fields, so gen-ref
+    # BOOTS must use the default release, where SME is implemented).
+    release=ArmDefaultRelease() if args.gen_ref else Armv8(),
     platform=QEMU_Virt(),
 )
 

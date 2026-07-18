@@ -57,6 +57,10 @@ class MmioVirtIO : public BasicPioDevice
     Tick read(PacketPtr pkt) override;
     Tick write(PacketPtr pkt) override;
 
+  public: // Serializable
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
+
   protected:
     /** @{ */
     /** Offsets into VirtIO MMIO space. */

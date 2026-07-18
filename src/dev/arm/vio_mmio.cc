@@ -60,6 +60,28 @@ MmioVirtIO::~MmioVirtIO()
 {
 }
 
+void
+MmioVirtIO::serialize(CheckpointOut &cp) const
+{
+    BasicPioDevice::serialize(cp);
+    // ISR is guest-visible dynamic state: a checkpoint taken with an
+    // un-acked used-buffer notification must restore it, or the guest's
+    // ISR read returns 0 and a level-triggered line asserted at the GIC
+    // can never be acknowledged and deasserted (interrupt storm).
+    SERIALIZE_SCALAR(interruptStatus);
+}
+
+void
+MmioVirtIO::unserialize(CheckpointIn &cp)
+{
+    BasicPioDevice::unserialize(cp);
+    interruptStatus = 0;
+    // Optional: absent in checkpoints predating this field.
+    optParamIn(cp, "interruptStatus", interruptStatus);
+    if (interruptStatus != 0)
+        interrupt->raise();
+}
+
 Tick
 MmioVirtIO::read(PacketPtr pkt)
 {

@@ -292,6 +292,16 @@ Gicv3::update()
     distributor->update();
 }
 
+void
+Gicv3::drainResume()
+{
+    // A checkpoint can capture an interrupt that was pending-but-untaken at
+    // the snapshot instant (e.g. a level-asserted virtio completion). The
+    // GIC-internal state is restored verbatim, but nothing re-posts the
+    // CPU-side interrupt lines after a restore: recompute and deliver.
+    update();
+}
+
 bool
 Gicv3::supportsVersion(GicVersion version)
 {

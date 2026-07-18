@@ -1926,3 +1926,7 @@ class QEMU_Virt(RealView):
             boot_loader = loc("boot_v2_qemu_virt.arm64")
         # DTB at RAM base + 128MiB; kernel load offset = RAM base.
         super().setupBootLoader(cur_sys, boot_loader, 0x8000000, 0x40000000)
+        # Memory-mapped m5ops at the gem5 disk images' baked-in address
+        # (their gem5_bridge module default). The range sits in the PCI mem
+        # window, which never allocates BARs there on this bus.
+        cur_sys.m5ops_base = 0x10010000

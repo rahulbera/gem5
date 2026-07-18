@@ -123,12 +123,7 @@ def create(args):
         queueSize=1024,
     )
 
-    # m5ops via memory-mapped range (needed under KVM, and used by the
-    # gem5 disk images' gem5_bridge module, whose baked-in default address
-    # is 0x10010000 -- keep that so `m5 readfile` works unmodified. The
-    # address sits in the PCI mem window, which never allocates BARs there
-    # on this bus (no PCI devices).
-    system.m5ops_base = 0x10010000
+    # m5ops_base is set by QEMU_Virt.setupBootLoader (platform-owned).
 
     system.connect()
 

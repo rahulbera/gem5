@@ -1967,6 +1967,7 @@ std::unordered_map<MiscRegNum64, MiscRegIndex> miscRegNumToIdx{
     { MiscRegNum64(3, 3, 4, 2, 1), MISCREG_DAIF },
     { MiscRegNum64(3, 3, 4, 2, 2), MISCREG_SVCR },
     { MiscRegNum64(3, 3, 4, 2, 5), MISCREG_DIT },
+    { MiscRegNum64(3, 3, 4, 2, 6), MISCREG_SSBS },
     { MiscRegNum64(3, 3, 4, 4, 0), MISCREG_FPCR },
     { MiscRegNum64(3, 3, 4, 4, 1), MISCREG_FPSR },
     { MiscRegNum64(3, 3, 4, 5, 0), MISCREG_DSPSR_EL0 },
@@ -5713,6 +5714,13 @@ ISA::initializeMiscRegMetadata()
           pfr1_el1.sme = release->has(ArmExtension::FEAT_SME) ? 0x1 : 0x0;
           pfr1_el1.mpamFrac = release->has(ArmExtension::FEAT_MPAM) ?
               0x1 : 0x0;
+          // FEAT_SSBS2: gem5 decodes MSR/MRS SSBS (functional no-op
+          // speculation hint), so advertise the MSR-immediate form.
+          // Required so a KVM-booted kernel that patched SET_PSTATE_SSBS
+          // into its entry/mitigation paths (host has SSBS, e.g.
+          // Neoverse-V1) can resume on the simulated CPU without an
+          // Undefined on MSR SSBS -- the DIT lesson, again.
+          pfr1_el1.ssbs = 0x2;
           return pfr1_el1;
       }())
       .unserialize(0)
@@ -6138,6 +6146,8 @@ ISA::initializeMiscRegMetadata()
     InitReg(MISCREG_UAO)
       .allPrivileges().exceptUserMode();
     InitReg(MISCREG_DIT)
+      .allPrivileges();
+    InitReg(MISCREG_SSBS)
       .allPrivileges();
     InitReg(MISCREG_NZCV)
       .allPrivileges();

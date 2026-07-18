@@ -620,6 +620,10 @@ ISA::readMiscReg(RegIndex idx)
         {
             return miscRegs[MISCREG_CPSR] & 0x1000000;
         }
+      case MISCREG_SSBS:
+        {
+            return miscRegs[MISCREG_CPSR] & 0x1000;
+        }
       case MISCREG_L2CTLR:
         {
             // mostly unimplemented, just set NumCPUs field from sim and return
@@ -1347,6 +1351,15 @@ ISA::setMiscReg(RegIndex idx, RegVal val)
                 // DIT is a data-independent-timing hint; no MMU effect.
                 CPSR cpsr = miscRegs[MISCREG_CPSR];
                 cpsr.dit = (uint8_t) ((CPSR) newVal).dit;
+                newVal = cpsr;
+                idx = MISCREG_CPSR;
+            }
+            break;
+          case MISCREG_SSBS:
+            {
+                // SSBS is a speculation hint; functionally a no-op bit.
+                CPSR cpsr = miscRegs[MISCREG_CPSR];
+                cpsr.ssbs = (uint8_t) ((CPSR) newVal).ssbs;
                 newVal = cpsr;
                 idx = MISCREG_CPSR;
             }

@@ -48,6 +48,7 @@ from pathlib import Path
 import m5
 from m5.objects import (
     ArmDefaultRelease,
+    ArmExtension,
     Armv8,
     CowDiskImage,
     FetchDirectedPrefetcher,
@@ -173,6 +174,14 @@ def parse_args():
                         choices=list(MEM_FACTORIES.keys()))
     parser.add_argument("--mem-size", type=str, default="16GiB",
                         help="MUST match the snapshot (QPoints QEMU -m).")
+    parser.add_argument("--release", type=str, default="armv8",
+                        choices=["armv8", "kvm-host"],
+                        help="Restore CPU feature envelope. armv8: TCG "
+                             "cortex-a57 snapshots (Gates 0-C). kvm-host: "
+                             "KVM -cpu host,sve=off,pauth=off snapshots on "
+                             "Neoverse-V1 -- ArmDefaultRelease minus the "
+                             "masked features (PAuth, SVE/SME families); "
+                             "DIT/SSBS are unconditional in this fork.")
     parser.add_argument("--settle-insts", type=int, default=0)
     parser.add_argument("--warmup-insts", type=int, default=int(1e6))
     parser.add_argument("--detailed-insts", type=int, default=int(5e6))
@@ -334,7 +343,7 @@ board = QemuVirtBoard(
     # FEWER-but-advertised = enable-time faults (the SME/FA64 panic:
     # gem5's Armv8 release does not scrub SME ID fields, so gen-ref
     # BOOTS must use the default release, where SME is implemented).
-    release=ArmDefaultRelease() if args.gen_ref else Armv8(),
+    release=_pick_release(args),
     platform=QEMU_Virt(),
 )
 

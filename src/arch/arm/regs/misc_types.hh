@@ -61,6 +61,7 @@ namespace ArmISA
         Bitfield<20> il;        // AArch64
         Bitfield<19, 16> ge;
         Bitfield<15, 10> it2;
+        Bitfield<12> ssbs;      // AArch64
         Bitfield<9> d;          // AArch64
         Bitfield<9> e;
         Bitfield<8> a;
@@ -231,6 +232,7 @@ namespace ArmISA
 
     BitUnion64(AA64PFR1)
         Bitfield<27, 24> sme;
+        Bitfield<7, 4> ssbs;
         Bitfield<19, 16> mpamFrac;
     EndBitUnion(AA64PFR1)
 

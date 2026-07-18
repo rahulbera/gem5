@@ -125,6 +125,18 @@ def create(args):
 
     # m5ops_base is set by QEMU_Virt.setupBootLoader (platform-owned).
 
+    if args.cpu != "kvm":
+        # Match the QEMU-TCG cortex-a57 feature envelope (v8.0 + crypto).
+        # A restore CPU with MORE features than the snapshot CPU is
+        # poison: e.g. the 6.8 kernel's HINT-space PACIASP/AUTIASP are
+        # NOPs on a57 but LIVE with FEAT_PAuth -- the first AUTIASP on an
+        # unsigned pre-restore frame poisons the return pointer (bit 62)
+        # and the kernel oopses at a wild PC. Mirror image of the DIT
+        # lesson: restore features == snapshot features, both directions.
+        from m5.objects import Armv8
+
+        system.release = Armv8()
+
     system.connect()
 
     cluster_class = (

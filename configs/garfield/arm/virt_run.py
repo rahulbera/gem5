@@ -207,6 +207,21 @@ def parse_args():
 
 args = parse_args()
 
+
+def _pick_release(args):
+    # Feature-envelope law: restore CPU features must EQUAL snapshot CPU
+    # features (too few -> Undefined storms [DIT]; too many -> live PAuth
+    # poisons unsigned frames / SME FA64 panics).
+    if args.gen_ref:
+        return ArmDefaultRelease()
+    if args.release == "kvm-host":
+        rel = ArmDefaultRelease()
+        for ext in ("FEAT_PAuth", "FEAT_SVE", "FEAT_SVE2", "FEAT_SVE2p1",
+                    "FEAT_F32MM", "FEAT_F64MM", "FEAT_SME"):
+            rel.remove(ArmExtension(ext))
+        return rel
+    return Armv8()
+
 requires(isa_required=ISA.ARM)
 
 

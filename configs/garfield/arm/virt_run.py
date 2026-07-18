@@ -150,8 +150,16 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Garfield QEMU-virt detailed restore (Track B)."
     )
-    parser.add_argument("--restore-dir", type=str, required=True,
-                        help="QPoints snapshot directory (contains m5.cpt).")
+    parser.add_argument("--restore-dir", type=str, default=None,
+                        help="QPoints snapshot directory (contains m5.cpt). "
+                        "Omit with --gen-ref to BOOT instead of restore.")
+    parser.add_argument("--gen-ref", action="store_true",
+                        help="Native-reference generation mode: boot the "
+                        "guest on the ATOMIC core (no restore, no switch) "
+                        "and checkpoint at the image's kernel-booted "
+                        "marker. The resulting m5.cpt carries THIS "
+                        "board's section names -- the tree gen_template "
+                        "and all restores must share.")
     parser.add_argument("--disk-img", type=str, required=True,
                         help="The prepped guest image the snapshot was "
                         "taken against (referenced read-only).")
@@ -320,14 +328,44 @@ board = QemuVirtBoard(
     platform=QEMU_Virt(),
 )
 
+if not args.gen_ref and args.restore_dir is None:
+    raise SystemExit("--restore-dir is required unless --gen-ref")
+
 board.set_kernel_disk_workload(
     kernel=KernelResource(os.path.abspath(args.kernel)),
     disk_image=DiskImageResource(
         os.path.abspath(args.disk_img), root_partition="2"
     ),
     bootloader=BootloaderResource(os.path.abspath(args.bootloader)),
-    checkpoint=Path(args.restore_dir),
+    checkpoint=Path(args.restore_dir) if args.restore_dir else None,
 )
+
+if args.gen_ref:
+    # Boot on the ATOMIC (switch) core only; checkpoint at the first
+    # kernel-booted hypercall and exit. Uses the same primed-atomic
+    # arrangement as restores so the section tree is identical.
+    from gem5.simulate.exit_handler import ExitHandler
+    from gem5.utils.override import overrides as _ov
+
+    class _StopAtKernelBooted(ExitHandler, hypercall_num=1):
+        """Replace the stdlib id-1 handler (which continues) so run()
+        returns at the image's kernel-booted marker."""
+        def _process(self, simulator):
+            pass
+        def _exit_simulation(self):
+            return True
+
+    processor.prime_switch_core_active()
+    simulator = Simulator(board=board)
+    print(">>> gen-ref: booting to the kernel-booted marker (atomic) ...")
+    simulator.run()   # stdlib exit handler for hypercall 1 returns control
+    cpt = Path(m5.options.outdir) / f"cpt.{m5.curTick()}"
+    m5.checkpoint(str(cpt))
+    with open(cpt / "m5.cpt") as f:
+        assert f.read().splitlines()[-1].startswith("version_tags="), \
+            "reference m5.cpt truncated"
+    print(f">>> gen-ref: reference checkpoint at {cpt}")
+    raise SystemExit(0)
 
 processor.prime_switch_core_active()
 

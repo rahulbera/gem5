@@ -215,9 +215,10 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
       ADD_STAT(tlbSquashes, statistics::units::Count::get(),
                "Number of outstanding ITLB misses that were squashed"),
       ADD_STAT(wrappedFtqFaults, statistics::units::Count::get(),
-               "Number of times a fetch target's range wrapped past "
-               "MaxAddr and fetch issued a faulting access instead of "
-               "resteering BAC to avoid a livelock"),
+               "Number of fetch cycles in which the wrapped-fetch-target "
+               "guard fired (head fetch target failed to contain its own "
+               "start address after wrapping past MaxAddr) and fetch fell "
+               "through to a faulting access instead of resteering BAC"),
       ADD_STAT(nisnDist, statistics::units::Count::get(),
                "Number of instructions fetched each cycle (Total)"),
       ADD_STAT(idleRate, statistics::units::Ratio::get(),

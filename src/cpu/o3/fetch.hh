@@ -575,10 +575,12 @@ class Fetch
          * due to a squash.
          */
         statistics::Scalar tlbSquashes;
-        /** Total number of times fetch detected a fetch target whose
-         * range wrapped past MaxAddr (so it fails to contain its own
-         * start address) and issued a faulting fetch instead of
-         * resteering BAC, to avoid an unrecoverable livelock.
+        /** Number of fetch cycles in which the wrapped-fetch-target guard
+         * fired: the head fetch target failed to contain its own start
+         * address (range wrapped past MaxAddr) and fetch fell through to
+         * a faulting fetch instead of resteering BAC, avoiding an
+         * unrecoverable livelock. Counts guard-active cycles, not
+         * distinct wrap events.
          */
         statistics::Scalar wrappedFtqFaults;
         /** Distribution of number of instructions fetched each cycle. */

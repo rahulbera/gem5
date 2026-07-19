@@ -74,6 +74,15 @@ let {{
     def buildPauthObject(mnem, templateBase, opcode, hint, optArgs=[]):
         global header_output, decoder_output, exec_output
         if hint:
+            # The NOP fallback below is identity-correct only because the
+            # non-DataX2Reg templates pass op1='XDest', making XDest a
+            # *source* as well as a dest: the generated execute() reads it
+            # into the local up top, so the unconditional write-back stores
+            # it back unchanged. A hint=True DataX2Reg op (XDest write-only)
+            # would silently write back a default-initialized 0 -- fail the
+            # build instead of corrupting registers.
+            assert templateBase != 'DataX2Reg', \
+                "hint=True is only identity-safe when XDest is also a source"
             pac_code = '''
             if (HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
                 uint64_t res;

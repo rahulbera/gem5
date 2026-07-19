@@ -49,6 +49,7 @@
 #include <queue>
 
 #include "arch/generic/tlb.hh"
+#include "base/logging.hh"
 #include "base/types.hh"
 #include "cpu/base.hh"
 #include "cpu/exetrace.hh"
@@ -213,6 +214,10 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
                "Number of outstanding Icache misses that were squashed"),
       ADD_STAT(tlbSquashes, statistics::units::Count::get(),
                "Number of outstanding ITLB misses that were squashed"),
+      ADD_STAT(wrappedFtqFaults, statistics::units::Count::get(),
+               "Number of times a fetch target's range wrapped past "
+               "MaxAddr and fetch issued a faulting access instead of "
+               "resteering BAC to avoid a livelock"),
       ADD_STAT(nisnDist, statistics::units::Count::get(),
                "Number of instructions fetched each cycle (Total)"),
       ADD_STAT(idleRate, statistics::units::Ratio::get(),
@@ -232,6 +237,7 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
     noActiveThreadStallCycles.prereq(noActiveThreadStallCycles);
     icacheSquashes.prereq(icacheSquashes);
     tlbSquashes.prereq(tlbSquashes);
+    wrappedFtqFaults.prereq(wrappedFtqFaults);
     ftNumber.init(0, fetch->maxFTPerCycle, 1);
     nisnDist
         .init(/* base value */ 0,
@@ -1100,11 +1106,38 @@ Fetch::fetch(bool &status_change)
         assert(ftqReady(tid, status_change));
 
         if (!curFT->inRange(this_pc.instAddr())) {
-            DPRINTF(Fetch, "[tid:%i] PC:%#x not within fetch target: %s\n",
-                    tid, this_pc, curFT->toString());
-            bacResteer(this_pc, tid);
-            fetchStats.status[FtqWait]++;
-            return;
+            if (curFT->startAddress() == this_pc.instAddr()) {
+                // A freshly-generated fetch target that does not contain
+                // its own start address can only mean its [start, end]
+                // range wrapped past MaxAddr (e.g. a corrupted branch
+                // target, such as `ret` to a garbage link register,
+                // pushes the PC to MaxAddr and PCState::advance() wraps
+                // it back to a tiny value; BAC then builds a FT whose
+                // numeric end < start). Resteering BAC would just
+                // regenerate the same self-contradictory FT from the
+                // same poisoned PC forever (livelock: zero commits, sim
+                // ticks advance, no fault). Instead, fall through to the
+                // normal fetch/translate path below so the ITLB raises
+                // the architectural fault the guest is supposed to see.
+                warn_once("[tid:%i] Fetch target %s does not contain its "
+                        "own start address %#x (wrapped past MaxAddr); "
+                        "issuing faulting fetch instead of resteering to "
+                        "avoid a livelock.\n",
+                        tid, curFT->toString(), this_pc.instAddr());
+                DPRINTF(Fetch, "[tid:%i] PC:%#x is unfetchable (wrapped "
+                        "fetch target %s); issuing faulting fetch instead "
+                        "of resteering\n",
+                        tid, this_pc.instAddr(), curFT->toString());
+                ++fetchStats.wrappedFtqFaults;
+                // Fall through to fetchCacheLine() below.
+            } else {
+                DPRINTF(Fetch,
+                        "[tid:%i] PC:%#x not within fetch target: %s\n",
+                        tid, this_pc, curFT->toString());
+                bacResteer(this_pc, tid);
+                fetchStats.status[FtqWait]++;
+                return;
+            }
         }
     }
 

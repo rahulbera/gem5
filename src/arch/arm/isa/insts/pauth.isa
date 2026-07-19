@@ -42,41 +42,65 @@ let {{
     decoder_output = ""
     exec_output = ""
 
-    def pacEnabledCode(hint):
-        if hint:
-            code = """
-                if (!HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
-                    return NoFault;
-                }
-                """
-        else:
-            code = """
+    # When FEAT_PAuth is not implemented, the hint-space PAC/AUT/XPAC
+    # instructions execute as NOPs. Crucially, a "NOP" here must still
+    # fall through to the destination write-back with XDest unchanged
+    # (identity) rather than returning early: every one of these
+    # instructions declares a destination register (x30/x17/x16), so on
+    # a renaming CPU model (O3) the destination physical register has
+    # already been allocated and the rename map already points younger
+    # consumers at it by the time execute() runs. Returning early skips
+    # setRegOperand(), leaving that physical register holding stale
+    # garbage that consumers then read (observed: `paciasp` in every
+    # pac-ret kernel prologue corrupting x30 -> stp spills garbage ->
+    # ret jumps wild, on a no-PAuth restore config). Atomic/simple CPUs
+    # masked the bug because for them not writing the register really
+    # is an identity operation.
+    def pauthHintNopCode(mnem):
+        return '''
+                warn_once("%s executed as a NOP (FEAT_PAuth not "
+                          "implemented); writing the destination "
+                          "register back unchanged.");
+                ''' % mnem
+
+    def pacUndefinedCode():
+        return """
                 if (!HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
                     return std::make_shared<UndefinedInstruction>(
                         machInst, true);
                 }
                 """
-        return code
 
     def buildPauthObject(mnem, templateBase, opcode, hint, optArgs=[]):
         global header_output, decoder_output, exec_output
-        pac_code = '''
+        if hint:
+            pac_code = '''
+            if (HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
+                uint64_t res;
+                fault = %(op)s(xc->tcBase(), %(op1)s, %(op2)s, &res);
+                XDest = res;
+            } else {
+                %(nop)s
+            }
+            '''
+        else:
+            pac_code = '''
             %(enabled)s
 
             uint64_t res;
             fault = %(op)s(xc->tcBase(), %(op1)s, %(op2)s, &res);
             XDest = res;
             '''
+        subst = {"enabled": pacUndefinedCode(),
+                 "nop": pauthHintNopCode(mnem),
+                 "op": opcode}
         if templateBase=='DataX2Reg':
-            code = pac_code % {"enabled": pacEnabledCode(hint),
-                               "op1": 'Op164',
-                               "op2": 'Op264',
-                               "op":  opcode }
+            subst["op1"] = 'Op164'
+            subst["op2"] = 'Op264'
         else:
-            code = pac_code % {"enabled": pacEnabledCode(hint),
-                               "op1": 'XDest',
-                               "op2": 'Op164',
-                               "op":  opcode }
+            subst["op1"] = 'XDest'
+            subst["op2"] = 'Op164'
+        code = pac_code % subst
 
         iop = ArmInstObjParams(mnem, mnem.capitalize(),
                                templateBase+"Op", code, optArgs)
@@ -88,11 +112,23 @@ let {{
         global header_output, decoder_output, exec_output
         templateBase = "XPauthOpRegReg"
 
-        code = pacEnabledCode(hint) + """
-            uint64_t res;
-            stripPAC(xc->tcBase(), XDest, data, &res);
-            XDest = res;
-            """
+        if hint:
+            # Same NOP-must-still-write-XDest rule as buildPauthObject.
+            code = '''
+            if (HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
+                uint64_t res;
+                stripPAC(xc->tcBase(), XDest, data, &res);
+                XDest = res;
+            } else {
+                %s
+            }
+            ''' % pauthHintNopCode(mnem)
+        else:
+            code = pacUndefinedCode() + """
+                uint64_t res;
+                stripPAC(xc->tcBase(), XDest, data, &res);
+                XDest = res;
+                """
         regoptype = 'RegOp'
 
         iop = ArmInstObjParams(mnem, mnem.capitalize(),

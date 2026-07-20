@@ -260,6 +260,28 @@ class MemRenamePredictor : public SimObject
         stats.aliasVerifyCorrect++;
     }
 
+    /** Rename (diagnostic): whether the mode-C alias resolved to a physreg
+     *  different from the one the located store captured -- i.e. the data
+     *  arch reg was redefined in between, so the alias bets on register
+     *  liveness rather than memory dataflow. */
+    void
+    noteAliasProducerStaleness(bool stale)
+    {
+        if (stale) {
+            stats.aliasProducerStale++;
+        } else {
+            stats.aliasProducerCurrent++;
+        }
+    }
+
+    /** Verify (diagnostic): the alias outcome bucketed by that staleness.
+     *  Index order matches aliasStaleOutcomeNames. */
+    void
+    noteAliasOutcomeByStaleness(bool stale, bool correct)
+    {
+        stats.aliasOutcomeByStaleness[(stale ? 2 : 0) + (correct ? 1 : 0)]++;
+    }
+
     /** Writeback: an aliased load's producer was not yet ready, so the
      *  verification was deferred until the producer wrote back. */
     void
@@ -306,6 +328,14 @@ class MemRenamePredictor : public SimObject
         return _predictIntLoadsOnly;
     }
 
+    /** Mode C: reject an alias whose rename-map lookup no longer matches the
+     *  physreg the located store captured. See the param description. */
+    bool
+    aliasRequireCurrentProducer() const
+    {
+        return _aliasRequireCurrentProducer;
+    }
+
     /** Whether mode C (producer aliasing) is enabled (else value_only/B). */
     bool
     unified() const
@@ -315,6 +345,8 @@ class MemRenamePredictor : public SimObject
 
   private:
     MrnTables tables;
+    const bool _aliasRequireCurrentProducer;
+
     const bool _predictIntLoadsOnly;
     /** mrnMode == unified (mode C active, subsumes B). */
     const bool _unified;
@@ -365,6 +397,18 @@ class MemRenamePredictor : public SimObject
         /** Mode-C (alias) forwards discarded before they could verify,
          *  indexed by MrnSquashReason. */
         statistics::Vector predictionsSquashedAlias;
+
+        /** Diagnostic: alias attempts whose rename-map lookup matched the
+         *  located store's own captured data physreg. */
+        statistics::Scalar aliasProducerCurrent;
+
+        /** Diagnostic: alias attempts where it did NOT match (the data arch
+         *  reg was redefined between the store's rename and the load's). */
+        statistics::Scalar aliasProducerStale;
+
+        /** Diagnostic: alias verify outcome bucketed by staleness --
+         *  {currentWrong, currentCorrect, staleWrong, staleCorrect}. */
+        statistics::Vector aliasOutcomeByStaleness;
 
     } stats;
 };

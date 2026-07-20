@@ -1816,6 +1816,7 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
         // verified or the ROB would re-account it as a squashed prediction.
         load->setMrnResolved();
         if (mrn) {
+            mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), false);
             mrn->aliasMispredict(load->pcState().instAddr(), squashed);
         }
         DPRINTF(MRN,
@@ -1828,6 +1829,7 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
     } else {
         load->setMrnResolved();
         if (mrn) {
+            mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), true);
             mrn->noteAliasCorrect();
         }
         DPRINTF(MRN,

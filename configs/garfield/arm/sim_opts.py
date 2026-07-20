@@ -173,6 +173,14 @@ def add_common_args(
         "no producer found).",
     )
     garfield.add_argument(
+        "--mrn-alias-allow-stale",
+        action="store_true",
+        help="Mode C: alias even when the store's data register was "
+        "redefined between the located store's rename and the load's "
+        "(restores the pre-gate behaviour). Off by default: that case "
+        "measured 0-30%% correct versus 100%% when they agree.",
+    )
+    garfield.add_argument(
         "--mrn-allow-nonint",
         action="store_true",
         help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
@@ -212,6 +220,7 @@ def make_mrn(args):
         mrnMode=args.mrn_mode.replace("-", "_"),
         mrnCorrelation=args.mrn_correlation.replace("-", "_"),
         predictIntLoadsOnly=not args.mrn_allow_nonint,
+        aliasRequireCurrentProducer=not args.mrn_alias_allow_stale,
     )
 
 

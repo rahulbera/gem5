@@ -12,6 +12,7 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
                        p.loadTableEntries, p.loadTableAssoc,
                        p.valueFileEntries, p.confBits, p.confThreshold,
                        p.confInc, p.confDec, p.resetConfOnMispredict}),
+      _aliasRequireCurrentProducer(p.aliasRequireCurrentProducer),
       _predictIntLoadsOnly(p.predictIntLoadsOnly),
       _unified(p.mrnMode == enums::unified),
       _useStoreSet(p.mrnCorrelation == enums::store_set),
@@ -55,9 +56,24 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "by squash reason"),
       ADD_STAT(predictionsSquashedAlias, statistics::units::Count::get(),
                "Mode-C (alias) forwards squashed before they could verify, "
-               "by squash reason")
+               "by squash reason"),
+      ADD_STAT(aliasProducerCurrent, statistics::units::Count::get(),
+               "Alias attempts whose rename-map lookup matched the located "
+               "store's own captured data physreg"),
+      ADD_STAT(aliasProducerStale, statistics::units::Count::get(),
+               "Alias attempts where the data arch reg was redefined between "
+               "the located store's rename and the load's rename"),
+      ADD_STAT(aliasOutcomeByStaleness, statistics::units::Count::get(),
+               "Alias verify outcome bucketed by producer staleness")
 {
     const int num_reasons = static_cast<int>(MrnSquashReason::Num);
+
+    static const char *staleness_names[] = {"currentWrong", "currentCorrect",
+                                            "staleWrong", "staleCorrect"};
+    aliasOutcomeByStaleness.init(4).flags(statistics::total);
+    for (int i = 0; i < 4; i++) {
+        aliasOutcomeByStaleness.subname(i, staleness_names[i]);
+    }
 
     predictionsSquashedValue.init(num_reasons).flags(statistics::total);
     predictionsSquashedAlias.init(num_reasons).flags(statistics::total);

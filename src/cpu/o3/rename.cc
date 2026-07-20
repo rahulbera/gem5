@@ -1280,6 +1280,30 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     // the mapping and skipping the refcount bump when producer == prevReg.
     // This is exactly what lets a changing-value recurrence benefit from C, so
     // there is deliberately no producer==cur rejection.
+    // Garfield: does the rename-map lookup still agree with the physreg the
+    // located store captured? A mismatch means data_arch was redefined
+    // between that store's rename and this load's rename, so the alias is a
+    // bet on register LIVENESS rather than on memory dataflow.
+    //
+    // Measured on 10M warmup + 50M detailed, mode C:
+    //   agree    -> 100.0% correct (n=155 across gcc+cpython, zero errors)
+    //   disagree ->  29.9% on 721.gcc_r.2.0, 0.0% on 714.cpython_r.2.3
+    // and the disagreeing case is 96-100% of all alias attempts, so it
+    // accounts for essentially every alias mispredict.
+    //
+    // Rejecting here does not lose the prediction: the caller falls through
+    // to the mode-B value snapshot (see the `mrnPred.valid && !mrnAliased`
+    // branch in renameInsts), which verifies far better on the same loads.
+    const PhysRegIdPtr store_captured = store->renamedSrcIdx(n - 1);
+    const bool stale = (store_captured != producer);
+    if (stale) {
+        inst->setMrnAliasStale();
+    }
+    memRenamePred->noteAliasProducerStaleness(stale);
+    if (stale && memRenamePred->aliasRequireCurrentProducer()) {
+        return false;
+    }
+
     inst->setMrnAliasProducer(producer);
     inst->setMrnProducerSeq(store->seqNum);
     inst->setMrnPath(DynInst::MrnAlias);

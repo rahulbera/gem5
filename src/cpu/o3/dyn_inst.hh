@@ -187,13 +187,17 @@ class DynInst : public ExecContext, public RefCounted
         ReqMade,
         MemOpDone,
         HtmFromTransaction,
-        NoCapableFU, /// Processor does not have capability to
-                     /// execute the instruction
-        IsGhost,     /// Garfield: skip OoO IQ entry, issue
-                     /// bandwidth, and execution port
-        Mrned,       /// Garfield: load was memory-renamed (MRN)
-        MrnResolved, /// Garfield: the MRN prediction was resolved (correct
-                     /// or mispredicted); a squash must not re-account it
+        NoCapableFU,   /// Processor does not have capability to
+                       /// execute the instruction
+        IsGhost,       /// Garfield: skip OoO IQ entry, issue
+                       /// bandwidth, and execution port
+        Mrned,         /// Garfield: load was memory-renamed (MRN)
+        MrnResolved,   /// Garfield: the MRN prediction was resolved (correct
+                       /// or mispredicted); a squash must not re-account it
+        MrnAliasStale, /// Garfield (diagnostic): the mode-C alias resolved
+                       /// to a physreg different from the one the located
+                       /// store captured, i.e. the data arch reg was
+                       /// redefined in between
         MaxFlags
     };
 
@@ -427,6 +431,21 @@ class DynInst : public ExecContext, public RefCounted
     setMrnResolved()
     {
         instFlags[MrnResolved] = true;
+    }
+
+    /** Garfield (diagnostic): mode C aliased to the CURRENT rename-map
+     *  mapping of the store's data arch reg, which differs from the physreg
+     *  the located store itself captured. Tests whether mode C is
+     *  predicting register liveness rather than memory dataflow. */
+    bool
+    mrnAliasStale() const
+    {
+        return instFlags[MrnAliasStale];
+    }
+    void
+    setMrnAliasStale()
+    {
+        instFlags[MrnAliasStale] = true;
     }
 
     /** Garfield: MRN-predicted value snapshotted for this load. */

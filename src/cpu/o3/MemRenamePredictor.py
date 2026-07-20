@@ -47,6 +47,18 @@ class MemRenamePredictor(SimObject):
     trainAtCommit = Param.Bool(
         True, "Train the predictor at commit (mode B value snapshot)"
     )
+    aliasRequireCurrentProducer = Param.Bool(
+        True,
+        "Mode C: only alias when the rename-map mapping of the store's data "
+        "architectural register still equals the physreg the located store "
+        "itself captured. When they disagree the arch reg was redefined in "
+        "between, so the alias is a bet on register liveness rather than on "
+        "memory dataflow -- measured at 29.9% correct on 721.gcc_r.2.0 and "
+        "0.0% on 714.cpython_r.2.3, against 100% (n=155, zero errors) when "
+        "they agree. A rejected alias falls back to the mode-B value "
+        "snapshot rather than losing the prediction. Set False to restore "
+        "the previous always-alias behaviour.",
+    )
     predictIntLoadsOnly = Param.Bool(
         True,
         "Mode B forwards a scalar RegVal, which is only valid for "

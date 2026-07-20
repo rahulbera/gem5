@@ -264,7 +264,12 @@ class IEW
      * violation. Public so the LSQ can trigger MRN misprediction recovery
      * (squash from the renamed load inclusive) via its iewStage pointer.
      */
-    void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid);
+    /** Squashes from an instruction inclusive. @param reason why the squash
+     *  was raised -- this entry point is shared by real memory-order
+     *  violations and both MRN mispredict paths, and only the caller knows
+     *  which. Carried to the ROB for the MRN squash accounting. */
+    void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
+                             MrnSquashReason reason);
 
   private:
     /** Sends commit proper information for a squash due to a branch

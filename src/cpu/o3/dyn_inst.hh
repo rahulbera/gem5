@@ -192,6 +192,8 @@ class DynInst : public ExecContext, public RefCounted
         IsGhost,     /// Garfield: skip OoO IQ entry, issue
                      /// bandwidth, and execution port
         Mrned,       /// Garfield: load was memory-renamed (MRN)
+        MrnResolved, /// Garfield: the MRN prediction was resolved (correct
+                     /// or mispredicted); a squash must not re-account it
         MaxFlags
     };
 
@@ -408,6 +410,23 @@ class DynInst : public ExecContext, public RefCounted
     setMrned()
     {
         instFlags[Mrned] = true;
+    }
+
+    /** Garfield: the MRN prediction for this load has been resolved --
+     *  it verified correct or it mispredicted. Set on all four resolution
+     *  arms in LSQUnit, including the mispredict arms: squashDueToMemOrder
+     *  is inclusive, so a mispredicting load squashes itself and would
+     *  otherwise be counted both as a mispredict and as a squashed
+     *  prediction. */
+    bool
+    mrnResolved() const
+    {
+        return instFlags[MrnResolved];
+    }
+    void
+    setMrnResolved()
+    {
+        instFlags[MrnResolved] = true;
     }
 
     /** Garfield: MRN-predicted value snapshotted for this load. */

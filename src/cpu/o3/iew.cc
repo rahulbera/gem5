@@ -492,6 +492,7 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
 
         toCommit->mispredictInst[tid] = inst;
         toCommit->includeSquashInst[tid] = false;
+        toCommit->mrnSquashReason[tid] = MrnSquashReason::Branch;
 
         wroteToTimeBuffer = true;
     }
@@ -499,7 +500,8 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
 }
 
 void
-IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
+IEW::squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
+                         MrnSquashReason reason)
 {
     DPRINTF(IEW, "[tid:%i] Memory violation, squashing violator and younger "
             "insts, PC: %s [sn:%llu].\n", tid, inst->pcState(), inst->seqNum);
@@ -519,6 +521,7 @@ IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
 
         // Must include the memory violator in the squash.
         toCommit->includeSquashInst[tid] = true;
+        toCommit->mrnSquashReason[tid] = reason;
 
         wroteToTimeBuffer = true;
     }
@@ -1345,7 +1348,7 @@ IEW::executeInsts()
                 instQueue.violation(inst, violator);
 
                 // Squash.
-                squashDueToMemOrder(violator, tid);
+                squashDueToMemOrder(violator, tid, MrnSquashReason::MemOrder);
 
                 ++iewStats.memOrderViolationEvents;
             }

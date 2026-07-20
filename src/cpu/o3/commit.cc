@@ -522,6 +522,9 @@ Commit::squashAll(ThreadID tid)
     // Hopefully nothing breaks.)
     youngestSeqNum[tid] = lastCommitedSeqNum[tid];
 
+    // Garfield MRN: squashAll serves traps, interrupts, ThreadContext
+    // writes, drain and squash-after -- all collapsed into Other.
+    rob->setMrnSquashReason(tid, MrnSquashReason::Other);
     rob->squash(squashed_inst, tid);
     changedROBNumEntries[tid] = true;
 
@@ -950,6 +953,10 @@ Commit::commit()
             // number as the youngest instruction in the ROB.
             youngestSeqNum[tid] = squashed_inst;
 
+            // Garfield MRN: the initiator (IEW) knows why -- branch
+            // mispredict, real memory-order violation, or an MRN
+            // mispredict on either forwarding path.
+            rob->setMrnSquashReason(tid, fromIEW->mrnSquashReason[tid]);
             rob->squash(squashed_inst, tid);
             changedROBNumEntries[tid] = true;
 

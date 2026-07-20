@@ -50,6 +50,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/mrn_squash_reason.hh"
 #include "cpu/reg_class.hh"
 #include "enums/SMTQueuePolicy.hh"
 
@@ -206,6 +207,24 @@ class ROB
      */
     void squash(InstSeqNum squash_num, ThreadID tid);
 
+    /** Garfield MRN: record why the squash about to be executed was raised.
+     *  Commit sets this immediately before each squash() call; doSquash
+     *  attributes every discarded, not-yet-verified MRN prediction to it.
+     *  A squash can span several cycles (squashWidth), so the reason
+     *  persists here until the next squash overwrites it. */
+    void
+    setMrnSquashReason(ThreadID tid, MrnSquashReason reason)
+    {
+        mrnSquashReason[tid] = reason;
+    }
+
+    /** Garfield MRN: the reason recorded for the in-progress squash. */
+    MrnSquashReason
+    getMrnSquashReason(ThreadID tid) const
+    {
+        return mrnSquashReason[tid];
+    }
+
     /** Updates the head instruction with the new oldest instruction. */
     void updateHead();
 
@@ -328,6 +347,9 @@ class ROB
 
     /** Is the ROB done squashing. */
     bool doneSquashing[MaxThreads];
+
+    /** Garfield MRN: why the in-progress squash was raised. */
+    MrnSquashReason mrnSquashReason[MaxThreads];
 
     /** Number of active threads. */
     ThreadID numThreads;

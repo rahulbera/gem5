@@ -45,6 +45,7 @@
 #include "base/logging.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/mem_rename_predictor.hh"
 #include "debug/Fetch.hh"
 #include "debug/ROB.hh"
 #include "params/BaseO3CPU.hh"
@@ -109,6 +110,7 @@ ROB::resetState()
         squashIt[tid] = instList[tid].end();
         squashedSeqNum[tid] = 0;
         doneSquashing[tid] = true;
+        mrnSquashReason[tid] = MrnSquashReason::Other;
     }
     numInstsInROB = 0;
 
@@ -337,6 +339,28 @@ ROB::doSquash(ThreadID tid)
                 (*squashIt[tid])->threadNumber,
                 (*squashIt[tid])->pcState(),
                 (*squashIt[tid])->seqNum);
+
+        // Garfield MRN: an MRN-forwarded load discarded before it could
+        // verify. Attribute it to the reason Commit recorded, split by
+        // forwarding path.
+        //
+        // The MrnResolved bit is what makes this exactly-once, NOT the
+        // instruction's squashed status. squash() resets squashIt to the
+        // tail, so overlapping squashes re-walk entries; and a large squash
+        // spans several cycles (squashWidth) during which LSQUnit::squash
+        // marks the whole load-queue range squashed in one go. Gating on
+        // isSquashed() therefore both double-counts (overlapping walks) and
+        // under-counts (loads the LSQ already marked) -- measured as a -16k
+        // and then a +12.5k closure residual on 708.sqlite_r.2.2.
+        const DynInstPtr &squashing = *squashIt[tid];
+        if (squashing->isMrned() && !squashing->mrnResolved()) {
+            squashing->setMrnResolved();
+            MemRenamePredictor *mrn = cpu->getMemRenamePred();
+            if (mrn) {
+                mrn->noteSquashedPrediction(squashing->mrnAliased(),
+                                            mrnSquashReason[tid]);
+            }
+        }
 
         // Mark the instruction as squashed, and ready to commit so that
         // it can drain out of the pipeline.

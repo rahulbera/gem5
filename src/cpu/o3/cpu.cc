@@ -48,6 +48,7 @@
 #include "cpu/checker/thread_context.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/mem_rename_predictor.hh"
 #include "cpu/o3/thread_context.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/thread_context.hh"
@@ -1270,6 +1271,23 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
                 (*instIt)->threadNumber,
                 (*instIt)->seqNum,
                 (*instIt)->pcState());
+
+        // Garfield MRN: an MRN-forwarded load that was renamed but never
+        // reached the ROB, so ROB::doSquash never walks it. Commit cannot
+        // catch these either: getInsts() is skipped entirely while commit
+        // is squashing (see commit.cc), which is exactly when they are
+        // dropped. removeInstsNotInROB walks only instructions past the ROB
+        // tail, so this is disjoint from the ROB site; the MrnResolved bit
+        // guards the overlap regardless.
+        const DynInstPtr &inst = *instIt;
+        if (inst->isMrned() && !inst->mrnResolved()) {
+            inst->setMrnResolved();
+            MemRenamePredictor *mrn = getMemRenamePred();
+            if (mrn) {
+                mrn->noteSquashedPrediction(inst->mrnAliased(),
+                                            rob.getMrnSquashReason(tid));
+            }
+        }
 
         // Mark it as squashed.
         (*instIt)->setSquashed();

@@ -49,8 +49,24 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "verification waited for the producer"),
       ADD_STAT(bindingsLearned, statistics::units::Count::get(),
                "loadPC->storePC correlator bindings learned from LSQ "
-               "forwarding")
-{}
+               "forwarding"),
+      ADD_STAT(predictionsSquashedValue, statistics::units::Count::get(),
+               "Mode-B (value) forwards squashed before they could verify, "
+               "by squash reason"),
+      ADD_STAT(predictionsSquashedAlias, statistics::units::Count::get(),
+               "Mode-C (alias) forwards squashed before they could verify, "
+               "by squash reason")
+{
+    const int num_reasons = static_cast<int>(MrnSquashReason::Num);
+
+    predictionsSquashedValue.init(num_reasons).flags(statistics::total);
+    predictionsSquashedAlias.init(num_reasons).flags(statistics::total);
+
+    for (int i = 0; i < num_reasons; i++) {
+        predictionsSquashedValue.subname(i, mrnSquashReasonNames[i]);
+        predictionsSquashedAlias.subname(i, mrnSquashReasonNames[i]);
+    }
+}
 
 } // namespace o3
 } // namespace gem5

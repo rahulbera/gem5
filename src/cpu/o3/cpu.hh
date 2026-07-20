@@ -420,6 +420,15 @@ class CPU : public BaseCPU
      */
     bool removeInstsThisCycle;
 
+    /** Garfield MRN: the memory-rename predictor, or NULL when MRN is
+     *  disabled. It lives in IEW; this exposes it to the ROB, which does the
+     *  squashed-prediction accounting. */
+    MemRenamePredictor *
+    getMemRenamePred() const
+    {
+        return iew.getMemRenamePred();
+    }
+
   protected:
     /** The branch and PC address calculation stage. */
     BAC bac;

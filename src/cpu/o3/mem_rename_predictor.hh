@@ -6,6 +6,7 @@
 
 #include "base/statistics.hh"
 #include "base/types.hh"
+#include "cpu/o3/mrn_squash_reason.hh"
 #include "sim/sim_object.hh"
 
 namespace gem5
@@ -267,6 +268,27 @@ class MemRenamePredictor : public SimObject
         stats.aliasVerifyWaitedForProducer++;
     }
 
+    /** Squash: an MRN-forwarded load was discarded before it could verify.
+     *  Called once per such load from ROB::doSquash. @param is_alias true if
+     *  the load took the mode-C alias path, false for the mode-B value path;
+     *  @param reason why the squash was raised. Together with
+     *  predictionsCorrect/mispredicts this closes the per-path accounting:
+     *    forwardsValue == predictionsCorrect + mispredicts
+     *                     + predictionsSquashedValue::total
+     *    forwardsAlias == aliasVerifyCorrect + aliasMispredicts
+     *                     + predictionsSquashedAlias::total
+     *  (to within the MRN loads still in flight at the dump boundary). */
+    void
+    noteSquashedPrediction(bool is_alias, MrnSquashReason reason)
+    {
+        const int idx = static_cast<int>(reason);
+        if (is_alias) {
+            stats.predictionsSquashedAlias[idx]++;
+        } else {
+            stats.predictionsSquashedValue[idx]++;
+        }
+    }
+
     /** Verify: an aliased load mispredicted; reset confidence and record the
      *  flush cost (the load plus every younger in-flight inst). */
     void
@@ -335,6 +357,15 @@ class MemRenamePredictor : public SimObject
         statistics::Scalar aliasVerifyWaitedForProducer;
         /** loadPC->storePC correlator bindings learned from LSQ forwarding. */
         statistics::Scalar bindingsLearned;
+
+        /** Mode-B (value) forwards discarded before they could verify,
+         *  indexed by MrnSquashReason. */
+        statistics::Vector predictionsSquashedValue;
+
+        /** Mode-C (alias) forwards discarded before they could verify,
+         *  indexed by MrnSquashReason. */
+        statistics::Vector predictionsSquashedAlias;
+
     } stats;
 };
 

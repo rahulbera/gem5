@@ -1173,6 +1173,10 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                         // discarded by the squash.
                         InstSeqNum squashed =
                             cpu->getCurrentInstSeq() - inst->seqNum;
+                        // Resolved: the squash below is inclusive of this
+                        // load, so mark it verified or the ROB would
+                        // re-account it as a squashed prediction.
+                        inst->setMrnResolved();
                         if (mrn) {
                             mrn->mispredict(inst->pcState().instAddr(),
                                             squashed);
@@ -1184,10 +1188,14 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 inst->threadNumber, inst->seqNum,
                                 inst->pcState(), inst->mrnPredVal(), true_val,
                                 squashed);
-                        iewStage->squashDueToMemOrder(inst,
-                                                      inst->threadNumber);
-                    } else if (mrn) {
-                        mrn->noteCorrect();
+                        iewStage->squashDueToMemOrder(
+                            inst, inst->threadNumber,
+                            MrnSquashReason::MrnValue);
+                    } else {
+                        inst->setMrnResolved();
+                        if (mrn) {
+                            mrn->noteCorrect();
+                        }
                     }
                 }
             }
@@ -1804,6 +1812,9 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
     if (true_val != pred_val) {
         // Flush cost: the load and every younger in-flight inst (inclusive).
         InstSeqNum squashed = cpu->getCurrentInstSeq() - load->seqNum;
+        // Resolved: the squash below is inclusive of this load, so mark it
+        // verified or the ROB would re-account it as a squashed prediction.
+        load->setMrnResolved();
         if (mrn) {
             mrn->aliasMispredict(load->pcState().instAddr(), squashed);
         }
@@ -1812,8 +1823,10 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
                 "real=%#x (producer phys %i) -- squashing %llu insts\n",
                 load->threadNumber, load->seqNum, load->pcState(), pred_val,
                 true_val, producer->index(), squashed);
-        iewStage->squashDueToMemOrder(load, load->threadNumber);
+        iewStage->squashDueToMemOrder(load, load->threadNumber,
+                                      MrnSquashReason::MrnAlias);
     } else {
+        load->setMrnResolved();
         if (mrn) {
             mrn->noteAliasCorrect();
         }

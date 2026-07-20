@@ -246,8 +246,9 @@ def parse_options():
     option(
         "--json-config",
         metavar="FILE",
-        default="config.json",
-        help="Create JSON output of the configuration [Default: %default]",
+        default="",
+        help="Create JSON output of the configuration (the same canonical "
+        "config that --dump-config emits as ini) [Default: disabled]",
     )
     option(
         "--dot-config",

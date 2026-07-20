@@ -60,7 +60,6 @@ from . import (
     stats,
     ticks,
 )
-from .citations import gather_citations
 from .util import (
     fatal,
     warn,
@@ -140,8 +139,6 @@ def _dump_configs(
     if dot_config:
         do_dot(root, outdir, dot_config)
         do_ruby_dot(root, outdir, dot_config)
-
-    gather_citations(root, outdir)
 
 
 def _create_cpp_objects(root, ckpt_dir):

@@ -72,7 +72,6 @@ import m5
 from m5.objects import (
     ArmDefaultRelease,
     FetchDirectedPrefetcher,
-    MemRenamePredictor,
     VExpress_GEM5_V1,
 )
 from m5.util import addToPath
@@ -84,16 +83,11 @@ addToPath("../..")
 from garfield.arm import (
     cache_hierarchy,
     neoverse_v2,
+    sim_opts,
 )
 
 from gem5.components.boards.arm_board import ArmBoard
 from gem5.components.boards.mem_mode import MemMode
-from gem5.components.memory.single_channel import (
-    DIMM_DDR5_4400,
-    DIMM_DDR5_6400,
-    DIMM_DDR5_8400,
-    SingleChannelDDR4_2400,
-)
 from gem5.components.processors.base_cpu_core import BaseCPUCore
 from gem5.components.processors.cpu_types import CPUTypes
 from gem5.components.processors.simple_core import SimpleCore
@@ -120,13 +114,6 @@ HERE = Path(__file__).resolve().parent
 INVOCATIONS_JSON = Path(
     "/home/ubuntu/work/garfield/gem5-workloadzoo/tools/simpoint/invocations.json"
 )
-
-MEM_FACTORIES = {
-    "DDR4_2400": SingleChannelDDR4_2400,
-    "DDR5_4400": DIMM_DDR5_4400,
-    "DDR5_6400": DIMM_DDR5_6400,
-    "DDR5_8400": DIMM_DDR5_8400,
-}
 
 
 def parse_args():
@@ -162,28 +149,6 @@ def parse_args():
         help="Shared root filesystem disk image (must be the image the "
         "checkpoint was generated against).",
     )
-    # --- machine ---------------------------------------------------------
-    parser.add_argument(
-        "--clk-freq",
-        type=str,
-        default="3GHz",
-        help="Core/board clock frequency.",
-    )
-    parser.add_argument(
-        "--mem-type",
-        type=str,
-        default="DDR5_6400",
-        choices=list(MEM_FACTORIES.keys()),
-        help="DRAM model preset (the DRAM model is free on restore; only the "
-        "size must match the checkpoint).",
-    )
-    parser.add_argument(
-        "--mem-size",
-        type=str,
-        default="16GiB",
-        help="Guest RAM capacity. MUST match the checkpoint (mass-gen "
-        "checkpoints are 16GiB).",
-    )
     # --- detailed region -------------------------------------------------
     parser.add_argument(
         "--settle-insts",
@@ -205,89 +170,13 @@ def parse_args():
         default=int(5e6),
         help="Neoverse V2 MEASURED insts (stats.reset .. stats.dump).",
     )
-    parser.add_argument(
-        "--progress-interval",
-        type=str,
-        default="0Hz",
-        help="CPU progress-heartbeat frequency (e.g. 1kHz); 0Hz disables.",
-    )
-    # --- prefetcher / front-end ablation (identical to se_run.py) --------
-    parser.add_argument(
-        "--disable-fdp",
-        action="store_true",
-        help="Disable the decoupled front-end + L1I FDP prefetcher.",
-    )
-    parser.add_argument(
-        "--disable-l1d-prefetch",
-        action="store_true",
-        help="Disable the L1D Stride+SMS prefetcher stack.",
-    )
-    parser.add_argument(
-        "--disable-l2-prefetch",
-        action="store_true",
-        help="Disable the L2 BOP prefetcher.",
-    )
-    # --- garfield knobs (identical to se_run.py) -------------------------
-    parser.add_argument(
-        "--ghost-exec",
-        action="store_true",
-        help="Garfield: ghost-execute control uops (skip OoO IQ entry, "
-        "issue bandwidth, execution port).",
-    )
-    parser.add_argument(
-        "--use-mrn",
-        action="store_true",
-        help="Garfield: attach the memory-rename predictor (MRN). When "
-        "absent, MRN stays disabled (NULL).",
-    )
-    parser.add_argument(
-        "--mrn-conf-bits",
-        type=int,
-        default=4,
-        help="MRN confidence-counter width in bits.",
-    )
-    parser.add_argument(
-        "--mrn-conf-threshold",
-        type=int,
-        default=8,
-        help="MRN minimum confidence required to predict.",
-    )
-    parser.add_argument(
-        "--mrn-store-entries",
-        type=int,
-        default=1024,
-        help="MRN store-cache entries.",
-    )
-    parser.add_argument(
-        "--mrn-load-entries",
-        type=int,
-        default=1024,
-        help="MRN load-cache entries.",
-    )
-    parser.add_argument(
-        "--mrn-mode",
-        type=str,
-        default="value-only",
-        choices=["value-only", "unified"],
-        help="MRN mode: value-only (mode B value snapshot only) or unified "
-        "(mode C, which subsumes B: alias to an in-flight producer's physreg "
-        "when found, else fall back to the B value snapshot).",
-    )
-    parser.add_argument(
-        "--mrn-correlation",
-        type=str,
-        default="lsq-forward",
-        choices=["lsq-forward", "store-set"],
-        help="Producer-binding source for unified mode: lsq-forward "
-        "(loadPC->storePC learned from LSQ forwarding) or store-set (stub: "
-        "no producer found).",
-    )
-    parser.add_argument(
-        "--mrn-allow-nonint",
-        action="store_true",
-        help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
-        "mode B forwards a scalar value, so forwarding a non-integer "
-        "(vector/FP) load will panic. Default off (integer loads only).",
+    # The machine / prefetcher / garfield knobs are shared with se_run.py.
+    # The DRAM model is free on restore; only the SIZE must match.
+    sim_opts.add_common_args(
+        parser,
+        mem_size_default="16GiB",
+        mem_size_help="Guest RAM capacity. MUST match the checkpoint "
+        "(mass-gen checkpoints are 16GiB).",
     )
     return parser.parse_args()
 
@@ -325,10 +214,14 @@ def load_invocation(benchmark, inv):
 binary, workload_args, stdin = load_invocation(args.benchmark, args.inv)
 workdir = f"/home/gem5/{args.benchmark}/{args.inv}"
 
-_cmd = "./" + binary + (
-    " " + " ".join(shlex.quote(a) for a in workload_args)
-    if workload_args
-    else ""
+_cmd = (
+    "./"
+    + binary
+    + (
+        " " + " ".join(shlex.quote(a) for a in workload_args)
+        if workload_args
+        else ""
+    )
 )
 if stdin:
     _cmd += " < " + shlex.quote(stdin)
@@ -351,21 +244,7 @@ def make_neoverse_v2_core():
     # BaseCPU::takeOverFrom asserts the swapped-in and swapped-out cores share
     # a cpuId (see restore_o3.py, which primes both cores at cpu_id=0).
     core = BaseCPUCore(neoverse_v2.NeoverseV2(cpu_id=0), isa=ISA.ARM)
-    cpu = core.core
-    if args.disable_fdp:
-        cpu.decoupledFrontEnd = False
-    cpu.progress_interval = args.progress_interval
-    cpu.ghostExec = args.ghost_exec
-    if args.use_mrn:
-        cpu.memRenamePredictor = MemRenamePredictor(
-            confBits=args.mrn_conf_bits,
-            confThreshold=args.mrn_conf_threshold,
-            storeTableEntries=args.mrn_store_entries,
-            loadTableEntries=args.mrn_load_entries,
-            mrnMode=args.mrn_mode.replace("-", "_"),
-            mrnCorrelation=args.mrn_correlation.replace("-", "_"),
-            predictIntLoadsOnly=not args.mrn_allow_nonint,
-        )
+    sim_opts.apply_core_knobs(core.core, args)
     return core
 
 
@@ -458,15 +337,12 @@ class NeoverseV2RestoreProcessor(SwitchableProcessor):
 
 
 # ---- assemble the board (ArmBoard + VExpress, per restore_o3.py) -----------
-memory = MEM_FACTORIES[args.mem_type](size=args.mem_size)
+memory = sim_opts.make_memory(args)
 
 detailed_core = make_neoverse_v2_core()
 
 cache = RestoreNeoverseV2CacheHierarchy(
-    detailed_core,
-    enable_fdp=not args.disable_fdp,
-    enable_l1d_prefetch=not args.disable_l1d_prefetch,
-    enable_l2_prefetch=not args.disable_l2_prefetch,
+    detailed_core, **sim_opts.cache_kwargs(args)
 )
 
 processor = NeoverseV2RestoreProcessor(detailed_core, make_atomic_core())
@@ -504,15 +380,8 @@ print(
     f"  core     : NeoverseV2 (ArmO3CPU) restore @ {args.clk_freq} "
     f"(ATOMIC start-for-restore)"
 )
-print(
-    f"  caches   : L1I/L1D 64KiB, L2 2MiB | "
-    f"FDP={'off' if args.disable_fdp else 'on'}, "
-    f"L1Dpf={'off' if args.disable_l1d_prefetch else 'on'}, "
-    f"L2pf={'off' if args.disable_l2_prefetch else 'on'}"
-)
-print(f"  dram     : {args.mem_type} @ {args.mem_size}")
-print(f"  mrn      : {'on (' + args.mrn_mode + ')' if args.use_mrn else 'off'}"
-      f"  ghostExec={args.ghost_exec}")
+for line in sim_opts.describe(args):
+    print(line)
 print(f"  workload : {args.benchmark} inv={args.inv}  ({binary})")
 print(f"  restore  : {args.restore_dir}")
 print(
@@ -535,7 +404,9 @@ simulator = Simulator(
 # (1) instantiate + restore the checkpoint; run a tiny ATOMIC settle so the
 #     restored state is live and drainable before the CPU handover.
 settle = max(1, args.settle_insts)
-print(f">>> instantiate + restore {args.restore_dir}; ATOMIC settle {settle:,} ...")
+print(
+    f">>> instantiate + restore {args.restore_dir}; ATOMIC settle {settle:,} ..."
+)
 simulator.schedule_max_insts(settle)
 simulator.run()
 print(f">>> restored; insts={simulator.get_instruction_count()}")
@@ -547,7 +418,9 @@ simulator.switch_processor()
 
 # (3) Neoverse V2 UNMEASURED warmup (warms the cold caches / predictors)
 if args.warmup_insts > 0:
-    print(f">>> Neoverse V2 warmup {args.warmup_insts:,} insts (unmeasured) ...")
+    print(
+        f">>> Neoverse V2 warmup {args.warmup_insts:,} insts (unmeasured) ..."
+    )
     simulator.schedule_max_insts(args.warmup_insts)
     simulator.run()
 

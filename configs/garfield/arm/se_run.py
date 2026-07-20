@@ -41,7 +41,6 @@ import os
 import shlex
 
 import m5
-from m5.objects import MemRenamePredictor
 from m5.util import addToPath
 from m5.util.convert import toFrequency
 
@@ -51,15 +50,10 @@ addToPath("../..")
 from garfield.arm import (
     cache_hierarchy,
     neoverse_v2,
+    sim_opts,
 )
 
 from gem5.components.boards.simple_board import SimpleBoard
-from gem5.components.memory.single_channel import (
-    DIMM_DDR5_4400,
-    DIMM_DDR5_6400,
-    DIMM_DDR5_8400,
-    SingleChannelDDR4_2400,
-)
 from gem5.components.processors.base_cpu_core import BaseCPUCore
 from gem5.components.processors.base_cpu_processor import (
     BaseCPUProcessor,
@@ -71,13 +65,6 @@ from gem5.resources.resource import (
 )
 from gem5.simulate.simulator import Simulator
 from gem5.utils.requires import requires
-
-MEM_FACTORIES = {
-    "DDR4_2400": SingleChannelDDR4_2400,
-    "DDR5_4400": DIMM_DDR5_4400,
-    "DDR5_6400": DIMM_DDR5_6400,
-    "DDR5_8400": DIMM_DDR5_8400,
-}
 
 SMOKE_TESTS = {"hello": "arm-hello64-static"}
 
@@ -114,111 +101,14 @@ def parse_args():
         help="Number of SE cores; the same binary runs on each.",
     )
     parser.add_argument(
-        "--clk-freq",
-        type=str,
-        default="3GHz",
-        help="Core/board clock frequency.",
-    )
-    parser.add_argument(
-        "--mem-type",
-        type=str,
-        default="DDR5_6400",
-        choices=list(MEM_FACTORIES.keys()),
-        help="DRAM model preset.",
-    )
-    parser.add_argument(
-        "--mem-size",
-        type=str,
-        default="4GiB",
-        help="DRAM capacity.",
-    )
-    parser.add_argument(
         "--max-insts",
         type=int,
         default=0,
         help="Cap committed instructions (0 = unlimited).",
     )
-    parser.add_argument(
-        "--disable-fdp",
-        action="store_true",
-        help="Disable the decoupled front-end + L1I FDP prefetcher.",
-    )
-    parser.add_argument(
-        "--disable-l1d-prefetch",
-        action="store_true",
-        help="Disable the L1D Stride+SMS prefetcher stack.",
-    )
-    parser.add_argument(
-        "--disable-l2-prefetch",
-        action="store_true",
-        help="Disable the L2 BOP prefetcher.",
-    )
-    parser.add_argument(
-        "--progress-interval",
-        type=str,
-        default="0Hz",
-        help="CPU progress-heartbeat frequency (e.g. 1kHz); 0Hz disables.",
-    )
-    parser.add_argument(
-        "--ghost-exec",
-        action="store_true",
-        help="Garfield: ghost-execute control uops (skip OoO IQ entry, "
-        "issue bandwidth, execution port).",
-    )
-    parser.add_argument(
-        "--use-mrn",
-        action="store_true",
-        help="Garfield: attach the memory-rename predictor (MRN). When "
-        "absent, MRN stays disabled (NULL).",
-    )
-    parser.add_argument(
-        "--mrn-conf-bits",
-        type=int,
-        default=4,
-        help="MRN confidence-counter width in bits.",
-    )
-    parser.add_argument(
-        "--mrn-conf-threshold",
-        type=int,
-        default=8,
-        help="MRN minimum confidence required to predict.",
-    )
-    parser.add_argument(
-        "--mrn-store-entries",
-        type=int,
-        default=1024,
-        help="MRN store-cache entries.",
-    )
-    parser.add_argument(
-        "--mrn-load-entries",
-        type=int,
-        default=1024,
-        help="MRN load-cache entries.",
-    )
-    parser.add_argument(
-        "--mrn-mode",
-        type=str,
-        default="value-only",
-        choices=["value-only", "unified"],
-        help="MRN mode: value-only (mode B value snapshot only) or unified "
-        "(mode C, which subsumes B: alias to an in-flight producer's physreg "
-        "when found, else fall back to the B value snapshot).",
-    )
-    parser.add_argument(
-        "--mrn-correlation",
-        type=str,
-        default="lsq-forward",
-        choices=["lsq-forward", "store-set"],
-        help="Producer-binding source for unified mode: lsq-forward "
-        "(loadPC->storePC learned from LSQ forwarding) or store-set (stub: "
-        "no producer found).",
-    )
-    parser.add_argument(
-        "--mrn-allow-nonint",
-        action="store_true",
-        help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
-        "mode B forwards a scalar value, so forwarding a non-integer "
-        "(vector/FP) load will panic. Default off (integer loads only).",
+    # The machine / prefetcher / garfield knobs are shared with fs_run.py.
+    sim_opts.add_common_args(
+        parser, mem_size_default="4GiB", mem_size_help="DRAM capacity."
     )
     return parser.parse_args()
 
@@ -227,13 +117,9 @@ args = parse_args()
 
 requires(isa_required=ISA.ARM)
 
-memory = MEM_FACTORIES[args.mem_type](size=args.mem_size)
+memory = sim_opts.make_memory(args)
 
-cache = cache_hierarchy.NeoverseV2CacheHierarchy(
-    enable_fdp=not args.disable_fdp,
-    enable_l1d_prefetch=not args.disable_l1d_prefetch,
-    enable_l2_prefetch=not args.disable_l2_prefetch,
-)
+cache = cache_hierarchy.NeoverseV2CacheHierarchy(**sim_opts.cache_kwargs(args))
 
 cores = [
     BaseCPUCore(neoverse_v2.NeoverseV2(), isa=ISA.ARM)
@@ -242,22 +128,9 @@ cores = [
 processor = BaseCPUProcessor(cores=cores)
 for core in processor.get_cores():
     cpu = core.core
-    if args.disable_fdp:
-        cpu.decoupledFrontEnd = False
+    sim_opts.apply_core_knobs(cpu, args)
     if args.max_insts > 0:
         cpu.max_insts_any_thread = args.max_insts
-    cpu.progress_interval = args.progress_interval
-    cpu.ghostExec = args.ghost_exec
-    if args.use_mrn:
-        cpu.memRenamePredictor = MemRenamePredictor(
-            confBits=args.mrn_conf_bits,
-            confThreshold=args.mrn_conf_threshold,
-            storeTableEntries=args.mrn_store_entries,
-            loadTableEntries=args.mrn_load_entries,
-            mrnMode=args.mrn_mode.replace("-", "_"),
-            mrnCorrelation=args.mrn_correlation.replace("-", "_"),
-            predictIntLoadsOnly=not args.mrn_allow_nonint,
-        )
 
 board = SimpleBoard(
     clk_freq=args.clk_freq,
@@ -282,13 +155,8 @@ print(
     f"  core     : NeoverseV2 (ArmO3CPU) x{args.num_cores} "
     f"@ {args.clk_freq}"
 )
-print(
-    f"  caches   : L1I/L1D 64KiB, L2 2MiB | "
-    f"FDP={'off' if args.disable_fdp else 'on'}, "
-    f"L1Dpf={'off' if args.disable_l1d_prefetch else 'on'}, "
-    f"L2pf={'off' if args.disable_l2_prefetch else 'on'}"
-)
-print(f"  dram     : {args.mem_type} @ {args.mem_size}")
+for line in sim_opts.describe(args):
+    print(line)
 print(f"  workload : {workload_name}")
 
 simulator = Simulator(board=board)

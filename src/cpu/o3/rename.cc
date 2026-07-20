@@ -753,7 +753,18 @@ Rename::renameInsts(ThreadID tid)
         MrnPrediction mrnPred{false, 0};
         bool mrnAliased = false;
         if (memRenamePred && inst->isLoad() && inst->numDestRegs() > 0) {
-            mrnPred = memRenamePred->predict(inst->pcState().instAddr());
+            const Addr load_pc = inst->pcState().instAddr();
+            mrnPred = memRenamePred->predict(load_pc);
+            // Snapshot the value this load's prediction uses REGARDLESS of
+            // confidence, so commit can train the counter against what the
+            // prediction actually was at rename rather than the value file as
+            // of commit (which the producing store may already have
+            // refreshed). Captured for every eligible load, not only
+            // forwarded ones, so below-threshold loads still train correctly.
+            const MrnPrediction snap = memRenamePred->peek(load_pc);
+            if (snap.valid) {
+                inst->setMrnSnap(snap.value);
+            }
             if (mrnPred.valid) {
                 mrnAliased = tryMemRenameAlias(inst, inst->threadNumber);
             }

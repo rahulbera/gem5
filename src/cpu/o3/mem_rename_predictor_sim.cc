@@ -13,6 +13,7 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
                        p.valueFileEntries, p.confBits, p.confThreshold,
                        p.confInc, p.confDec, p.resetConfOnMispredict}),
       _aliasRequireCurrentProducer(p.aliasRequireCurrentProducer),
+      _trainOnSnapshot(p.trainOnRenameSnapshot),
       _predictIntLoadsOnly(p.predictIntLoadsOnly),
       _unified(p.mrnMode == enums::unified),
       _useStoreSet(p.mrnCorrelation == enums::store_set),

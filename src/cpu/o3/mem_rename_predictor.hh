@@ -73,11 +73,31 @@ class MrnTables
     /** Rename: return a high-confidence value prediction for a load PC. */
     MrnPrediction predict(Addr loadPC);
 
+    /** Rename: the value predict() WOULD return for this load PC ignoring the
+     *  confidence gate, i.e. the current content of the load's bound slot.
+     *  valid=false when the load has no binding yet. Used to snapshot what
+     *  the prediction was at rename so confidence can be trained against it
+     *  at commit (see commitLoad). Does not touch LRU. */
+    MrnPrediction peek(Addr loadPC) const;
+
     /** Commit: a retiring store deposits its value for an address. */
     void commitStore(Addr effAddr, RegVal value);
 
-    /** Commit: bind a load PC to the producer slot and train confidence. */
-    void commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp);
+    /** Commit: bind a load PC to the producer slot and train confidence.
+     *
+     *  Confidence must measure "would the load's rename-time prediction have
+     *  been correct". With train_on_snapshot=true (the default) it is trained
+     *  against snap_value -- the value the prediction actually used, captured
+     *  at rename -- rather than valueFile[slot] as of commit, which the
+     *  producing store may already have refreshed. That commit-time refresh
+     *  is what made a changing recurrence report a spurious match every
+     *  iteration. snap_valid=false means the load had no rename-time
+     *  prediction (first binding / rebind), so there is nothing to validate
+     *  and confidence is left as bound. With train_on_snapshot=false the old
+     *  commit-time comparison is restored (for A/B). */
+    void commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp,
+                    bool train_on_snapshot = true, bool snap_valid = false,
+                    RegVal snap_value = 0);
 
     /** Writeback: reset a load PC's confidence (loop-safety). */
     void mispredict(Addr loadPC);
@@ -131,6 +151,8 @@ class MrnTables
     StoreEntry *storeAllocate(Addr addr);
     /** Find the load-cache entry for loadPC, or nullptr on a miss. */
     LoadEntry *loadFind(Addr loadPC);
+    /** const overload used by peek(), which must not disturb LRU. */
+    const LoadEntry *loadFind(Addr loadPC) const;
     /** Allocate (LRU-evict within the set) a load-cache entry for loadPC. */
     LoadEntry *loadAllocate(Addr loadPC);
     /** Allocate (LRU-evict) a value-file slot and return its index. */
@@ -178,6 +200,23 @@ class MemRenamePredictor : public SimObject
         return tables.predict(loadPC);
     }
 
+    /** Rename: the confidence-independent snapshot of the load's bound slot,
+     *  captured so commit can train against what the prediction actually
+     *  used rather than the refreshed value file. */
+    MrnPrediction
+    peek(Addr loadPC) const
+    {
+        return tables.peek(loadPC);
+    }
+
+    /** Whether confidence is trained against the rename snapshot (default)
+     *  rather than the commit-time value file. */
+    bool
+    trainOnSnapshot() const
+    {
+        return _trainOnSnapshot;
+    }
+
     /** Commit: a retiring store deposits a value. */
     void
     commitStore(Addr effAddr, RegVal value)
@@ -188,10 +227,12 @@ class MemRenamePredictor : public SimObject
 
     /** Commit: bind the load to the producer slot and train confidence. */
     void
-    commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp)
+    commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp,
+               bool snap_valid = false, RegVal snap_value = 0)
     {
         stats.loadsTrained++;
-        tables.commitLoad(loadPC, effAddr, realValue, isSpGp);
+        tables.commitLoad(loadPC, effAddr, realValue, isSpGp, _trainOnSnapshot,
+                          snap_valid, snap_value);
     }
 
     /** Writeback: a forwarded load mispredicted. Reset confidence
@@ -346,6 +387,8 @@ class MemRenamePredictor : public SimObject
   private:
     MrnTables tables;
     const bool _aliasRequireCurrentProducer;
+
+    const bool _trainOnSnapshot;
 
     const bool _predictIntLoadsOnly;
     /** mrnMode == unified (mode C active, subsumes B). */

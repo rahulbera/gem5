@@ -98,6 +98,30 @@ MrnTables::loadFind(Addr loadPC)
     return nullptr;
 }
 
+const MrnTables::LoadEntry *
+MrnTables::loadFind(Addr loadPC) const
+{
+    const unsigned set = static_cast<unsigned>(loadPC % loadSets);
+    const unsigned firstWay = set * loadAssoc;
+    for (unsigned w = 0; w < loadAssoc; ++w) {
+        const LoadEntry &e = loadCache[firstWay + w];
+        if (e.valid && e.tag == loadPC) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+MrnPrediction
+MrnTables::peek(Addr loadPC) const
+{
+    const LoadEntry *le = loadFind(loadPC);
+    if (le && le->slot >= 0 && valueFile[le->slot].valid) {
+        return MrnPrediction{true, valueFile[le->slot].value};
+    }
+    return MrnPrediction{false, 0};
+}
+
 MrnTables::LoadEntry *
 MrnTables::loadAllocate(Addr loadPC)
 {
@@ -153,7 +177,9 @@ MrnTables::commitStore(Addr effAddr, RegVal value)
 }
 
 void
-MrnTables::commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp)
+MrnTables::commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp,
+                      bool train_on_snapshot, bool snap_valid,
+                      RegVal snap_value)
 {
     StoreEntry *se = storeFind(effAddr);
     if (!se) {
@@ -165,6 +191,9 @@ MrnTables::commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp)
     se->lru = ++lruTick;
 
     // Bind loadPC -> slot in the load cache (allocate if new, conf starts 0).
+    // stable = the load already had this exact binding, so it carried a real
+    // rename-time prediction we can now validate.
+    bool stable = false;
     LoadEntry *le = loadFind(loadPC);
     if (!le) {
         le = loadAllocate(loadPC);
@@ -173,12 +202,28 @@ MrnTables::commitLoad(Addr loadPC, Addr effAddr, RegVal realValue, bool isSpGp)
         // Rebound to a different producer slot: retrain from scratch.
         le->slot = slot;
         le->conf = 0;
+    } else {
+        stable = true;
     }
     le->lru = ++lruTick;
     valueFile[slot].lru = ++lruTick;
 
-    // Train the confidence counter against the snapshotted value.
-    if (valueFile[slot].valid && valueFile[slot].value == realValue) {
+    // Decide whether the load's rename-time prediction would have been right.
+    bool correct;
+    if (train_on_snapshot) {
+        // Train against the value the prediction actually used at rename. A
+        // just-bound / rebinding occurrence has no such prediction, so leave
+        // confidence as bound rather than reward or punish it.
+        if (!stable || !snap_valid) {
+            return;
+        }
+        correct = (snap_value == realValue);
+    } else {
+        // Legacy behaviour: compare the value file as of commit.
+        correct = valueFile[slot].valid && valueFile[slot].value == realValue;
+    }
+
+    if (correct) {
         const unsigned inc = isSpGp ? (2 * confInc) : confInc;
         const unsigned next = le->conf + inc;
         le->conf = (next > confMax) ? confMax : next;

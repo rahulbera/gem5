@@ -173,6 +173,14 @@ def add_common_args(
         "no producer found).",
     )
     garfield.add_argument(
+        "--mrn-train-commit-value",
+        action="store_true",
+        help="Mode B: train confidence against the value file as of commit "
+        "(the old behaviour) instead of the rename-time snapshot. On by "
+        "default the snapshot is used, so a changing recurrence stops "
+        "earning spurious confidence.",
+    )
+    garfield.add_argument(
         "--mrn-alias-allow-stale",
         action="store_true",
         help="Mode C: alias even when the store's data register was "
@@ -221,6 +229,7 @@ def make_mrn(args):
         mrnCorrelation=args.mrn_correlation.replace("-", "_"),
         predictIntLoadsOnly=not args.mrn_allow_nonint,
         aliasRequireCurrentProducer=not args.mrn_alias_allow_stale,
+        trainOnRenameSnapshot=not args.mrn_train_commit_value,
     )
 
 

@@ -1449,9 +1449,10 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
                        ? head_inst->effSize
                        : sizeof(loaded_val);
         std::memcpy(&loaded_val, head_inst->memData, n);
-        memRenamePred->commitLoad(head_inst->pcState().instAddr(),
-                                  head_inst->effAddr, loaded_val,
-                                  /* isSpGp */ false);
+        memRenamePred->commitLoad(
+            head_inst->pcState().instAddr(), head_inst->effAddr, loaded_val,
+            /* isSpGp */ false, head_inst->mrnSnapValid(),
+            head_inst->mrnSnapValue());
     }
 
     // Return true to indicate that we have committed an instruction.

@@ -35,6 +35,29 @@ constexpr Addr kPc = 0x4000;
 constexpr Addr kAddr = 0x00dead00;
 constexpr RegVal kVal = 0x1234;
 
+// Mirror one pipeline pass over a load under the default snapshot-training
+// policy: snapshot the prediction at "rename" (peek, confidence-independent),
+// then train against it at "commit". This is exactly what rename.cc /
+// commit.cc do, so the core sees the same inputs it sees in a real run.
+void
+trainSnap(MrnTables &t, Addr pc, Addr addr, RegVal real, bool spgp = false)
+{
+    const MrnPrediction snap = t.peek(pc);
+    t.commitLoad(pc, addr, real, spgp, /*train_on_snapshot=*/true, snap.valid,
+                 snap.value);
+}
+
+// Train a stable value to a confident prediction; fails the test if it does
+// not converge within a generous cap.
+void
+trainToConfident(MrnTables &t)
+{
+    for (unsigned i = 0; i < 64 && !t.predict(kPc).valid; ++i) {
+        trainSnap(t, kPc, kAddr, kVal);
+    }
+    ASSERT_TRUE(t.predict(kPc).valid);
+}
+
 } // anonymous namespace
 
 // 1. A cold predict (nothing trained) must miss.
@@ -48,37 +71,28 @@ TEST(MemRenamePredictor, ColdPredictInvalid)
 //    high confidence, after which predict returns the snapshotted value.
 TEST(MemRenamePredictor, TrainsToHighConfidenceAndPredicts)
 {
-    const MrnConfig cfg = testConfig();
-    MrnTables tables(cfg);
+    MrnTables tables(testConfig());
 
     tables.commitStore(kAddr, kVal);
     // Binding has not happened yet: still a miss.
     EXPECT_FALSE(tables.predict(kPc).valid);
 
-    for (unsigned i = 0; i < cfg.confThreshold; ++i) {
-        tables.commitLoad(kPc, kAddr, kVal, /*isSpGp=*/false);
-    }
-
-    const MrnPrediction pred = tables.predict(kPc);
-    EXPECT_TRUE(pred.valid);
-    EXPECT_EQ(pred.value, kVal);
+    trainToConfident(tables);
+    EXPECT_EQ(tables.predict(kPc).value, kVal);
 }
 
-// 3. Once confident, a commit whose real value differs from the snapshot
-//    resets the confidence and predict misses again.
+// 3. Once confident, a commit whose real value differs from the rename
+//    snapshot resets the confidence and predict misses again.
 TEST(MemRenamePredictor, ValueMismatchResetsConfidence)
 {
-    const MrnConfig cfg = testConfig();
-    MrnTables tables(cfg);
+    MrnTables tables(testConfig());
 
     tables.commitStore(kAddr, kVal);
-    for (unsigned i = 0; i < cfg.confThreshold; ++i) {
-        tables.commitLoad(kPc, kAddr, kVal, /*isSpGp=*/false);
-    }
-    ASSERT_TRUE(tables.predict(kPc).valid);
+    trainToConfident(tables);
 
-    // Real value disagrees with the snapshot -> confidence reset.
-    tables.commitLoad(kPc, kAddr, 0x9999, /*isSpGp=*/false);
+    // The load's snapshot is still kVal, but it committed a different value
+    // -> the prediction would have been wrong -> confidence reset.
+    trainSnap(tables, kPc, kAddr, 0x9999);
     EXPECT_FALSE(tables.predict(kPc).valid);
 }
 
@@ -86,14 +100,10 @@ TEST(MemRenamePredictor, ValueMismatchResetsConfidence)
 //    safety, so a previously confident load PC misses afterwards.
 TEST(MemRenamePredictor, MispredictResetsConfidence)
 {
-    const MrnConfig cfg = testConfig();
-    MrnTables tables(cfg);
+    MrnTables tables(testConfig());
 
     tables.commitStore(kAddr, kVal);
-    for (unsigned i = 0; i < cfg.confThreshold; ++i) {
-        tables.commitLoad(kPc, kAddr, kVal, /*isSpGp=*/false);
-    }
-    ASSERT_TRUE(tables.predict(kPc).valid);
+    trainToConfident(tables);
 
     tables.mispredict(kPc);
     EXPECT_FALSE(tables.predict(kPc).valid);
@@ -108,18 +118,63 @@ TEST(MemRenamePredictor, SpGpRampsFaster)
     MrnTables slow(cfg);
     slow.commitStore(kAddr, kVal);
     unsigned slowCommits = 0;
-    while (!slow.predict(kPc).valid) {
-        slow.commitLoad(kPc, kAddr, kVal, /*isSpGp=*/false);
+    while (!slow.predict(kPc).valid && slowCommits < 64) {
+        trainSnap(slow, kPc, kAddr, kVal, /*spgp=*/false);
         ++slowCommits;
     }
 
     MrnTables fast(cfg);
     fast.commitStore(kAddr, kVal);
     unsigned fastCommits = 0;
-    while (!fast.predict(kPc).valid) {
-        fast.commitLoad(kPc, kAddr, kVal, /*isSpGp=*/true);
+    while (!fast.predict(kPc).valid && fastCommits < 64) {
+        trainSnap(fast, kPc, kAddr, kVal, /*spgp=*/true);
         ++fastCommits;
     }
 
+    ASSERT_TRUE(slow.predict(kPc).valid);
+    ASSERT_TRUE(fast.predict(kPc).valid);
     EXPECT_LT(fastCommits, slowCommits);
+}
+
+// 6. The 1a fix: a changing store->load recurrence must NOT build confidence
+//    under snapshot training. Each iteration the producing store refreshes
+//    the value file before the load commits, so the load's rename snapshot is
+//    the PREVIOUS iteration's value and never matches what it reads.
+TEST(MemRenamePredictor, ChangingRecurrenceStaysUnconfidentUnderSnapshot)
+{
+    const MrnConfig cfg = testConfig();
+    MrnTables tables(cfg);
+
+    RegVal v = 0x1000;
+    for (unsigned i = 0; i < 4 * cfg.confThreshold; ++i) {
+        // Snapshot at the load's rename: the slot still holds v_{i-1}.
+        const MrnPrediction snap = tables.peek(kPc);
+        // This iteration's store refreshes the slot to v_i before the load
+        // commits.
+        v += 1;
+        tables.commitStore(kAddr, v);
+        // The load reads v_i; its snapshot was v_{i-1} -> mismatch.
+        tables.commitLoad(kPc, kAddr, v, /*isSpGp=*/false,
+                          /*train_on_snapshot=*/true, snap.valid, snap.value);
+    }
+    EXPECT_FALSE(tables.predict(kPc).valid);
+}
+
+// 7. The same changing recurrence DOES build (false) confidence under the
+//    legacy commit-time comparison -- exactly the bug 1a fixes. Here training
+//    compares the value file AS OF COMMIT (already refreshed to v_i) against
+//    the committed value v_i, so it spuriously matches every iteration.
+TEST(MemRenamePredictor, ChangingRecurrenceBuildsFalseConfidenceLegacy)
+{
+    const MrnConfig cfg = testConfig();
+    MrnTables tables(cfg);
+
+    RegVal v = 0x1000;
+    for (unsigned i = 0; i < 4 * cfg.confThreshold; ++i) {
+        v += 1;
+        tables.commitStore(kAddr, v);
+        tables.commitLoad(kPc, kAddr, v, /*isSpGp=*/false,
+                          /*train_on_snapshot=*/false);
+    }
+    EXPECT_TRUE(tables.predict(kPc).valid);
 }

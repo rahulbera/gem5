@@ -192,6 +192,8 @@ class DynInst : public ExecContext, public RefCounted
         IsGhost,       /// Garfield: skip OoO IQ entry, issue
                        /// bandwidth, and execution port
         Mrned,         /// Garfield: load was memory-renamed (MRN)
+        MrnSnapValid,  /// Garfield: a rename-time value snapshot was captured
+                       /// for this load (for confidence training at commit)
         MrnResolved,   /// Garfield: the MRN prediction was resolved (correct
                        /// or mispredicted); a squash must not re-account it
         MrnAliasStale, /// Garfield (diagnostic): the mode-C alias resolved
@@ -414,6 +416,27 @@ class DynInst : public ExecContext, public RefCounted
     setMrned()
     {
         instFlags[Mrned] = true;
+    }
+
+    /** Garfield: the value the mode-B prediction WOULD have used for this
+     *  load, snapshotted at rename (for every predictor-eligible integer
+     *  load, not only forwarded ones). Confidence is trained against this at
+     *  commit so a changing recurrence cannot report a spurious match. */
+    bool
+    mrnSnapValid() const
+    {
+        return instFlags[MrnSnapValid];
+    }
+    RegVal
+    mrnSnapValue() const
+    {
+        return _mrnSnapValue;
+    }
+    void
+    setMrnSnap(RegVal v)
+    {
+        instFlags[MrnSnapValid] = true;
+        _mrnSnapValue = v;
     }
 
     /** Garfield: the MRN prediction for this load has been resolved --
@@ -1143,6 +1166,9 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield: MRN-predicted value snapshotted for this load. */
     RegVal _mrnPredVal = 0;
+
+    /** Garfield: rename-time value snapshot for confidence training. */
+    RegVal _mrnSnapValue = 0;
 
     /** Garfield: MRN forwarding path taken by this load. */
     MrnPath _mrnPath = MrnNone;

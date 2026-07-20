@@ -47,6 +47,16 @@ class MemRenamePredictor(SimObject):
     trainAtCommit = Param.Bool(
         True, "Train the predictor at commit (mode B value snapshot)"
     )
+    trainOnRenameSnapshot = Param.Bool(
+        True,
+        "Train the mode-B confidence counter against the value the prediction "
+        "actually used at rename, not the value file as of commit. The "
+        "commit-time value has already been refreshed by the producing "
+        "store, so a changing store->load recurrence reports a spurious "
+        "match every iteration and saturates confidence on exactly the loads "
+        "the forward gets wrong (measured: 43%% of gcc matches had a wrong "
+        "rename snapshot). Set False to restore the commit-time comparison.",
+    )
     aliasRequireCurrentProducer = Param.Bool(
         True,
         "Mode C: only alias when the rename-map mapping of the store's data "

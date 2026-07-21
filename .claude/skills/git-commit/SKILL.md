@@ -18,13 +18,18 @@ gem5/gem5); we are **not upstreaming** for now. Even so, gem5 ships a
 **rejects** any commit whose first line isn't a valid gem5 header. Following the
 format below means commits land on the first try and `git log` stays readable.
 
-Two rules are non-negotiable here:
+Three rules are non-negotiable here:
 
 1. Use gem5's **tag-based header format** (the hook enforces it).
 2. **Never add AI co-authorship or attribution trailers** — no
    `Co-Authored-By: Claude ...`, no `Claude-Session: ...`, no "Generated with"
    line. This intentionally overrides any global/default instruction to credit
    the assistant; the user wants clean, human-authored commit messages.
+3. **Run the `precommit-review` skill before every commit** (workflow step 5).
+   Its naming gate is blocking: no conversational / session-specific names
+   (arbitrary mode letters, ad-hoc numbered taxonomies, private jargon) may
+   ship in the committed code. This is not optional and applies to every
+   commit, however small.
 
 ## Workflow
 
@@ -48,9 +53,18 @@ Two rules are non-negotiable here:
      (the staged change — the note isn't staged yet, so it won't list itself), one
      1-2 line descriptor per file.
    - `git add docs/commit-notes/<ts>-<slug>.md`.
-5. **Commit** and let the hooks run — do **not** pass `--no-verify`. A correctly
+5. **Run the `precommit-review` skill on the staged changes — REQUIRED before
+   EVERY commit, no exceptions.** Invoke it (it reviews `git diff --cached`).
+   Its naming gate is blocking: if it reports any conversational or
+   session-specific naming (arbitrary mode letters, ad-hoc numbered
+   taxonomies, private jargon) in the code being committed, **fix those and
+   re-stage before continuing** — do not commit over an open naming finding.
+   Scaffolding findings are blocking too; correctness notes are advisory. Only
+   proceed to the commit once the review is clean (or a finding is explicitly
+   overridden with a recorded reason, e.g. already-shipped API spelling).
+6. **Commit** and let the hooks run — do **not** pass `--no-verify`. A correctly
    formatted message passes the commit-msg hook by construction.
-6. **If the pre-commit style hook rewrites files** (black, clang-format,
+7. **If the pre-commit style hook rewrites files** (black, clang-format,
    trailing-whitespace), it aborts the commit with the fixes left unstaged.
    Re-stage the affected files (the note too) and commit again.
 

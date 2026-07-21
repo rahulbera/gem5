@@ -40,10 +40,13 @@ fine to the author because they lived the discussion, and is opaque to everyone
 else. Flag, in code / comments / identifiers / param help / stat descriptions:
 
 - **Arbitrary letter or number labels** standing in for a concept: `mode A`,
-  `mode B`, `mode C`, `option 2`, `variant C.1`, `case B.3`, `the 1a fix`.
-  These carry no microarchitectural or domain meaning. Replace with what the
-  thing *does*: `mode B` → `value forwarding` / `the value path`; `mode C` →
-  `producer aliasing` / `the alias path`; `C.1` → the actual mechanism it names.
+  `mode B`, `mode C`, `mode (C)`, `option 2`, `variant C.1`, `case B.3`,
+  `the 1a fix`. Also the parenthesized and mid-sentence forms — `... the
+  aliasing path (C) ...`, `a later mode (C)` — which a naive `mode [abc]`
+  grep misses; search for the bare letter in parentheses too. These carry no
+  microarchitectural or domain meaning. Replace with what the thing *does*:
+  `mode B` → `value forwarding` / `the value path`; `mode C` → `producer
+  aliasing` / `the alias path`; `C.1` → the actual mechanism it names.
 - **Private jargon / nicknames** from discussion that never got a real
   definition in the code: internal shorthand, a reviewer's initials, a ticket's
   pet name, "the thing we talked about".

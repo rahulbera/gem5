@@ -168,10 +168,24 @@ the report, do not chase throwaway scripts.
    `forwardsAlias > 0`. This is impossible on the current build (aliasing
    cannot fire without value confidence) and is the direct demonstration that
    the trigger is decoupled.
-3. **`both` reproduces `unified`.** A run with `--mrn-alias` (value + alias,
-   alias-first) reproduces the pre-refactor `unified` numbers on
-   `721.gcc_r.2.0` and `708.sqlite_r.2.2` (alias-first is today's order), so
-   the A/B against the prior `unified` build should match.
+3. **`both` is a NEW operating point — it does NOT reproduce `unified`.**
+   (Correction, from the implementation review.) Decoupling is exactly what
+   changes `both`: the old `unified` attempted aliasing only inside
+   `if (predict().valid)`, i.e. only on value-confident loads, whereas
+   `--mrn-alias` (value + alias) now attempts aliasing on *every* load with a
+   correlator binding, independent of value confidence — a strict superset.
+   So `both` is expected to *diverge* from a prior `unified` build; a matching
+   A/B is the wrong test. Verify instead that under `--mrn-alias` both paths
+   fire (`forwardsValue > 0` and `forwardsAlias > 0`).
+
+**Note on "byte-identical" (verification 1):** the default is byte-identical
+in every simulation stat (IPC, cycles, committed insts, all value-path stats)
+*except* `bindingsLearned`, which drops to 0 because §3 correctly stops the
+value-only path from training the correlator it never reads. The correlator
+(fwdCache) is read only under `aliasingEnabled()`, so this has zero timing
+effect — it is a dead stat when aliasing is off. Measured on `721.gcc_r.2.0`:
+the only diff vs a pre-refactor value-only run is `bindingsLearned`
+411,623 → 0.
 
 ## Non-goals
 

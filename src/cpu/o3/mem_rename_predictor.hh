@@ -60,8 +60,8 @@ struct MrnConfig
  *  - Store cache: effAddr -> value-file slot index. Set-associative with
  *                 modulo indexing and LRU replacement within a set.
  *  - Value file:  an independent vector of {value, valid} slots with LRU.
- *                 Kept separate from the store cache because a later mode (C)
- *                 repurposes these slots.
+ *                 Kept separate from the store cache because the
+ *                 producer-aliasing path repurposes these slots.
  *  - Load cache:  loadPC -> {value-file slot index, confidence}. Also
  *                 set-associative with modulo indexing and LRU.
  */
@@ -379,11 +379,18 @@ class MemRenamePredictor : public SimObject
         return _aliasRequireCurrentProducer;
     }
 
-    /** Whether producer aliasing is enabled (else value_only). */
+    /** Whether the value-forwarding path is enabled. */
     bool
-    unified() const
+    valueForwardingEnabled() const
     {
-        return _unified;
+        return _enableValueForwarding;
+    }
+
+    /** Whether the producer-aliasing path is enabled. */
+    bool
+    aliasingEnabled() const
+    {
+        return _enableProducerAliasing;
     }
 
   private:
@@ -393,8 +400,10 @@ class MemRenamePredictor : public SimObject
     const bool _trainOnSnapshot;
 
     const bool _predictIntLoadsOnly;
-    /** mrnMode == unified (producer aliasing active, with value fallback). */
-    const bool _unified;
+    /** Value-forwarding path enabled. */
+    const bool _enableValueForwarding;
+    /** Producer-aliasing path enabled. */
+    const bool _enableProducerAliasing;
     /** mrnCorrelation == store_set (stub: predictProducerPC returns 0). */
     const bool _useStoreSet;
 

@@ -155,21 +155,24 @@ def add_common_args(
         help="MRN load-cache entries.",
     )
     garfield.add_argument(
-        "--mrn-mode",
-        type=str,
-        default="value-only",
-        choices=["value-only", "unified"],
-        help="MRN mode: value-only (value-snapshot forwarding only) "
-        "or unified "
-        "(producer aliasing: alias to an in-flight producer's physreg when "
-        "found, else fall back to value forwarding).",
+        "--mrn-no-value-forward",
+        action="store_true",
+        help="Disable the MRN value-forwarding path (on by default). Leaves "
+        "the producer-aliasing path unaffected.",
+    )
+    garfield.add_argument(
+        "--mrn-alias",
+        action="store_true",
+        help="Enable the MRN producer-aliasing path (off by default). "
+        "Independent of value forwarding; when both are on, aliasing takes "
+        "priority.",
     )
     garfield.add_argument(
         "--mrn-correlation",
         type=str,
         default="lsq-forward",
         choices=["lsq-forward", "store-set"],
-        help="Producer-binding source for unified mode: lsq-forward "
+        help="Producer-binding source for producer aliasing: lsq-forward "
         "(loadPC->storePC learned from LSQ forwarding) or store-set (stub: "
         "no producer found).",
     )
@@ -228,7 +231,8 @@ def make_mrn(args):
         confThreshold=args.mrn_conf_threshold,
         storeTableEntries=args.mrn_store_entries,
         loadTableEntries=args.mrn_load_entries,
-        mrnMode=args.mrn_mode.replace("-", "_"),
+        enableValueForwarding=not args.mrn_no_value_forward,
+        enableProducerAliasing=args.mrn_alias,
         mrnCorrelation=args.mrn_correlation.replace("-", "_"),
         predictIntLoadsOnly=not args.mrn_allow_nonint,
         aliasRequireCurrentProducer=not args.mrn_alias_allow_stale,
@@ -247,6 +251,18 @@ def apply_core_knobs(cpu, args):
         cpu.memRenamePredictor = mrn
 
 
+def _mrn_banner(args):
+    """MRN banner fragment naming which paths are active."""
+    if not args.use_mrn:
+        return "off"
+    paths = []
+    if not args.mrn_no_value_forward:
+        paths.append("value")
+    if args.mrn_alias:
+        paths.append("alias")
+    return f"on ({'+'.join(paths) if paths else 'none'})"
+
+
 def describe(args):
     """The machine banner lines implied by the shared knobs."""
     return [
@@ -256,6 +272,6 @@ def describe(args):
         f"L2pf={'off' if args.disable_l2_prefetch else 'on'}",
         f"  dram     : {args.mem_type} @ {args.mem_size}",
         f"  mrn      : "
-        f"{'on (' + args.mrn_mode + ')' if args.use_mrn else 'off'}"
+        f"{_mrn_banner(args)}"
         f"  ghostExec={args.ghost_exec}",
     ]

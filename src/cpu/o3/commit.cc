@@ -1442,7 +1442,8 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
     // load. The loaded value is in memData (loads complete before they
     // commit); commitLoad binds the load PC to its producer slot and updates
     // confidence. Training only — no timing effect.
-    if (memRenamePred && head_inst->isLoad() && head_inst->effAddrValid() &&
+    if (memRenamePred && memRenamePred->valueForwardingEnabled() &&
+        head_inst->isLoad() && head_inst->effAddrValid() &&
         head_inst->memData) {
         uint64_t loaded_val = 0;
         size_t n = head_inst->effSize < sizeof(loaded_val)

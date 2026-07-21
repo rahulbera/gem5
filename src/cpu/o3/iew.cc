@@ -1432,8 +1432,9 @@ IEW::writebackInsts()
                     // Garfield MRN aliasing: this physreg just became
                     // ready, so its value is available. Verify any aliased
                     // loads that were deferred waiting on this producer. Gated
-                    // on unified mode so off / value_only are byte-identical.
-                    if (memRenamePred && memRenamePred->unified()) {
+                    // on the aliasing path so it is inactive when aliasing is
+                    // disabled.
+                    if (memRenamePred && memRenamePred->aliasingEnabled()) {
                         ldstQueue.mrnProducerWroteBack(
                             tid, inst->renamedDestIdx(i));
                     }

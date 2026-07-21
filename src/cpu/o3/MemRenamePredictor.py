@@ -3,15 +3,8 @@ from m5.proxy import *
 from m5.SimObject import SimObject
 
 
-class MrnMode(Enum):
-    # value_only = value-snapshot forwarding only. unified = producer
-    # aliasing: alias to an in-flight producer's physreg when one is found,
-    # else fall back to the value snapshot.
-    vals = ["value_only", "unified"]
-
-
 class MrnCorrelation(Enum):
-    # How the unified predictor finds a load's producing store. lsq_forward
+    # How producer aliasing finds a load's producing store. lsq_forward
     # learns loadPC->storePC bindings from the LSQ store->load forward event;
     # store_set is a stub (treated as "no producer found").
     vals = ["lsq_forward", "store_set"]
@@ -79,15 +72,21 @@ class MemRenamePredictor(SimObject):
         "but is unimplemented for wide values, so a forwarded non-integer "
         "load will panic.",
     )
-    mrnMode = Param.MrnMode(
-        "value_only",
-        "value_only (value-snapshot forwarding only) | unified (producer "
-        "aliasing: alias to a producer's physreg when found, else fall back "
-        "to value forwarding).",
+    enableValueForwarding = Param.Bool(
+        True,
+        "Forward a snapshotted value into a high-confidence load's renamed "
+        "destination (the value path). Independent of producer aliasing.",
+    )
+    enableProducerAliasing = Param.Bool(
+        False,
+        "Alias a load's renamed destination to an in-flight producing "
+        "store's physreg when the correlator has a binding (the alias "
+        "path). Independent of value forwarding; when both are enabled, "
+        "aliasing takes priority.",
     )
     mrnCorrelation = Param.MrnCorrelation(
         "lsq_forward",
-        "Producer-binding source for the unified predictor: lsq_forward "
+        "Producer-binding source for producer aliasing: lsq_forward "
         "(loadPC->storePC learned from LSQ forwarding) | store_set (stub, "
         "treated as no producer found).",
     )

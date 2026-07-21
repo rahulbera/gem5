@@ -54,14 +54,22 @@ that were mispredicting stopped forwarding -- exactly the intended effect.
 then re-run the 190-checkpoint sweep, which now has a real chance of a net
 win.
 
-## 1b. Modes B and C should have independent gates (DEFERRED — after 1a)
+## 1b. Independent gates for the two paths
 
-**Key idea.** `rename.cc` calls `tryMemRenameAlias` only when `mrnPred.valid`,
-so producer aliasing fires only when **value forwarding's** confidence is
-above threshold, and aliasing is tried FIRST when it does. Two changes: give
-producer aliasing its own confidence counter and gate, and reverse the
-priority so value forwarding (the conservative path) is tried first and
-aliasing is the fallback when value forwarding declines.
+**Structural separation: DONE.** The value and alias paths are now
+independently enable/disable-able (`enableValueForwarding` /
+`enableProducerAliasing` replacing the `mrnMode` enum + `unified()`), with
+each gated on its own trigger in `rename.cc` and its own training gated per
+path. Proven: an alias-only run (`--mrn-alias --mrn-no-value-forward`) shows
+`forwardsValue == 0`, `forwardsAlias > 0` — impossible before, when aliasing
+rode the value path's confidence. Default (value-only) is byte-identical bar
+the now-unmaintained `bindingsLearned` (no timing effect). Priority when both
+on: aliasing-first. See `docs/superpowers/specs/2026-07-21-mrn-path-separation`.
+
+**Still deferred: give producer aliasing its own confidence counter.** Today
+aliasing fires whenever the correlator has a binding + the current-producer
+gate passes — no confidence of its own. That is the next step (make aliasing
+*selective*).
 
 **Motivation update — the original framing is refuted, but the fix still has
 merit.** The shadow probe measured producer aliasing's accuracy independent

@@ -747,25 +747,25 @@ Rename::renameInsts(ThreadID tid)
         renameSrcRegs(inst, inst->threadNumber);
 
         // Garfield MRN: decide a load's forwarding path *before* renaming its
-        // destination, so a producer-register alias can divert the
-        // destination map entry. predict() yields both the confidence and the
-        // value snapshot used when no in-flight producer is found.
+        // destination, so a producer alias can divert the destination map
+        // entry. The two paths are independent: value forwarding is gated on
+        // its own confidence (predict), producer aliasing on its own trigger
+        // (a correlator binding, inside tryMemRenameAlias). Aliasing takes
+        // priority when both apply.
         MrnPrediction mrnPred{false, 0};
         bool mrnAliased = false;
         if (memRenamePred && inst->isLoad() && inst->numDestRegs() > 0) {
             const Addr load_pc = inst->pcState().instAddr();
-            mrnPred = memRenamePred->predict(load_pc);
-            // Snapshot the value this load's prediction uses REGARDLESS of
-            // confidence, so commit can train the counter against what the
-            // prediction actually was at rename rather than the value file as
-            // of commit (which the producing store may already have
-            // refreshed). Captured for every eligible load, not only
-            // forwarded ones, so below-threshold loads still train correctly.
-            const MrnPrediction snap = memRenamePred->peek(load_pc);
-            if (snap.valid) {
-                inst->setMrnSnap(snap.value);
+            // Value path: confidence + the rename-time training snapshot.
+            if (memRenamePred->valueForwardingEnabled()) {
+                mrnPred = memRenamePred->predict(load_pc);
+                const MrnPrediction snap = memRenamePred->peek(load_pc);
+                if (snap.valid) {
+                    inst->setMrnSnap(snap.value);
+                }
             }
-            if (mrnPred.valid) {
+            // Alias path: its own trigger, not the value path's confidence.
+            if (memRenamePred->aliasingEnabled()) {
                 mrnAliased = tryMemRenameAlias(inst, inst->threadNumber);
             }
         }
@@ -1233,10 +1233,6 @@ Rename::renameSrcRegs(const DynInstPtr &inst, ThreadID tid)
 bool
 Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
 {
-    if (!memRenamePred->unified()) {
-        return false;
-    }
-
     // Only simple single-destination integer loads are aliased: the verify
     // reads a scalar RegVal, and multi-dest loads (e.g. LDP / writeback
     // forms) complicate the destination map surgery.

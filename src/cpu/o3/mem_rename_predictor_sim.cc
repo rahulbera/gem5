@@ -15,7 +15,8 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
       _aliasRequireCurrentProducer(p.aliasRequireCurrentProducer),
       _trainOnSnapshot(p.trainOnRenameSnapshot),
       _predictIntLoadsOnly(p.predictIntLoadsOnly),
-      _unified(p.mrnMode == enums::unified),
+      _enableValueForwarding(p.enableValueForwarding),
+      _enableProducerAliasing(p.enableProducerAliasing),
       _useStoreSet(p.mrnCorrelation == enums::store_set),
       stats(this)
 {}

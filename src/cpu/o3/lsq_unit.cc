@@ -882,7 +882,7 @@ LSQUnit::writebackStores()
         // runs only for committed (non-squashed) stores, so this is the
         // correct-path deposit; it is training only and has no timing effect.
         MemRenamePredictor *mrn = iewStage->getMemRenamePred();
-        if (mrn && inst->effAddrValid()) {
+        if (mrn && mrn->valueForwardingEnabled() && inst->effAddrValid()) {
             uint64_t store_val = 0;
             size_t n = request->_size < sizeof(store_val) ? request->_size
                                                           : sizeof(store_val);
@@ -1582,9 +1582,10 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                 // forwarded from this store, so bind loadPC -> storePC. At a
                 // future instance of this load PC, rename can find the
                 // (youngest in-flight) store with this PC and alias the load
-                // to its data physreg. Mode-independent: the binding is
-                // learned regardless of mrnMode (only its use is gated).
-                if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+                // to its data physreg. The correlator is maintained only
+                // when the aliasing path is enabled.
+                MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                if (mrn && mrn->aliasingEnabled()) {
                     mrn->trainForward(
                         load_inst->pcState().instAddr(),
                         store_it->instruction()->pcState().instAddr());

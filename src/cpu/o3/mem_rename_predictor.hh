@@ -51,8 +51,8 @@ struct MrnConfig
 };
 
 /**
- * Core of the memory-renaming predictor (Garfield Stage 2, mode B = value
- * snapshot). Owns the three structures and all predict/train logic, and is
+ * Core of the memory-renaming predictor (Garfield MRN, value-snapshot
+ * forwarding). Owns the three structures and all predict/train logic, and is
  * constructed purely from plain ints (MrnConfig) so it is unit-testable
  * without the SimObject/params machinery. MemRenamePredictor is a thin
  * SimObject wrapper that delegates to it.
@@ -102,7 +102,7 @@ class MrnTables
     /** Writeback: reset a load PC's confidence (loop-safety). */
     void mispredict(Addr loadPC);
 
-    /** Correlator (mode C, C.1 lsq_forward): record that a load PC forwarded
+    /** Correlator (LSQ-forward): record that a load PC forwarded
      *  from a store PC (learned at the LSQ store->load forward event). */
     void trainForward(Addr loadPC, Addr storePC);
 
@@ -135,8 +135,8 @@ class MrnTables
         uint64_t lru = 0;
     };
 
-    /** Correlator entry (C.1): loadPC -> producing storePC. Set-associative,
-     *  sized and indexed exactly like the load cache. */
+    /** Correlator entry (LSQ-forward): loadPC -> producing storePC.
+     * Set-associative, sized and indexed exactly like the load cache. */
     struct FwdEntry
     {
         Addr tag = 0;
@@ -175,7 +175,7 @@ class MrnTables
     std::vector<StoreEntry> storeCache;
     std::vector<LoadEntry> loadCache;
     std::vector<ValueSlot> valueFile;
-    /** Correlator table (C.1), sized/indexed like the load cache. */
+    /** Correlator table (LSQ-forward), sized/indexed like the load cache. */
     std::vector<FwdEntry> fwdCache;
 
     /** Monotonic counter used as the LRU timestamp for all structures. */
@@ -253,15 +253,15 @@ class MemRenamePredictor : public SimObject
         stats.predictionsMade++;
     }
 
-    /** Writeback: a forwarded load verified correct (mode B value path). */
+    /** Writeback: a forwarded load verified correct (value path). */
     void
     noteCorrect()
     {
         stats.predictionsCorrect++;
     }
 
-    /** Rename (mode C): record loadPC->storePC, learned from the LSQ
-     *  store->load forward event. */
+    /** Rename (aliasing): record loadPC->storePC, learned from the
+     * LSQ store->load forward event. */
     void
     trainForward(Addr loadPC, Addr storePC)
     {
@@ -269,8 +269,9 @@ class MemRenamePredictor : public SimObject
         tables.trainForward(loadPC, storePC);
     }
 
-    /** Rename (mode C): the store PC bound to this load PC, or 0 if none.
-     *  store_set correlation is a stub and always returns 0 (no producer). */
+    /** Rename (aliasing): the store PC bound to this load PC, or 0 if
+     * none. store_set correlation is a stub and always returns 0 (no
+     * producer). */
     Addr
     predictProducerPC(Addr loadPC)
     {
@@ -280,14 +281,14 @@ class MemRenamePredictor : public SimObject
         return tables.predictProducerPC(loadPC);
     }
 
-    /** Rename: a load was forwarded via the mode-B value snapshot. */
+    /** Rename: a load was forwarded via the value snapshot. */
     void
     noteForwardValue()
     {
         stats.forwardsValue++;
     }
 
-    /** Rename: a load was aliased to an in-flight producer's physreg (C). */
+    /** Rename: a load was aliased to an in-flight producer's physreg. */
     void
     noteForwardAlias()
     {
@@ -301,7 +302,7 @@ class MemRenamePredictor : public SimObject
         stats.aliasVerifyCorrect++;
     }
 
-    /** Rename (diagnostic): whether the mode-C alias resolved to a physreg
+    /** Rename (diagnostic): whether the producer alias resolved to a physreg
      *  different from the one the located store captured -- i.e. the data
      *  arch reg was redefined in between, so the alias bets on register
      *  liveness rather than memory dataflow. */
@@ -333,7 +334,7 @@ class MemRenamePredictor : public SimObject
 
     /** Squash: an MRN-forwarded load was discarded before it could verify.
      *  Called once per such load from ROB::doSquash. @param is_alias true if
-     *  the load took the mode-C alias path, false for the mode-B value path;
+     *  the load took the alias path, false for the value path;
      *  @param reason why the squash was raised. Together with
      *  predictionsCorrect/mispredicts this closes the per-path accounting:
      *    forwardsValue == predictionsCorrect + mispredicts
@@ -369,15 +370,16 @@ class MemRenamePredictor : public SimObject
         return _predictIntLoadsOnly;
     }
 
-    /** Mode C: reject an alias whose rename-map lookup no longer matches the
-     *  physreg the located store captured. See the param description. */
+    /** Aliasing: reject an alias whose rename-map lookup no longer
+     * matches the physreg the located store captured. See the param
+     * description. */
     bool
     aliasRequireCurrentProducer() const
     {
         return _aliasRequireCurrentProducer;
     }
 
-    /** Whether mode C (producer aliasing) is enabled (else value_only/B). */
+    /** Whether producer aliasing is enabled (else value_only). */
     bool
     unified() const
     {
@@ -391,12 +393,12 @@ class MemRenamePredictor : public SimObject
     const bool _trainOnSnapshot;
 
     const bool _predictIntLoadsOnly;
-    /** mrnMode == unified (mode C active, subsumes B). */
+    /** mrnMode == unified (producer aliasing active, with value fallback). */
     const bool _unified;
     /** mrnCorrelation == store_set (stub: predictProducerPC returns 0). */
     const bool _useStoreSet;
 
-    /** Training statistics (Garfield Stage 2, MRN). */
+    /** Training statistics (Garfield MRN). */
     struct MemRenameStats : public statistics::Group
     {
         explicit MemRenameStats(statistics::Group *parent);
@@ -417,27 +419,28 @@ class MemRenamePredictor : public SimObject
          *  work of the pipe flush. Summed over both the value and alias
          *  paths. */
         statistics::Scalar squashedInsts;
-        /** High-confidence loads forwarded via the mode-B value snapshot. */
+        /** High-confidence loads forwarded via the value snapshot. */
         statistics::Scalar forwardsValue;
         /** High-confidence loads aliased to an in-flight producer's physreg
-         *  (mode C). */
+         *  (producer aliasing). */
         statistics::Scalar forwardsAlias;
         /** Aliased loads that verified correct at writeback. */
         statistics::Scalar aliasVerifyCorrect;
         /** Aliased loads that verified wrong and forced a squash. */
         statistics::Scalar aliasMispredicts;
         /** Aliased loads whose producer was not yet ready at the load's
-         *  writeback, so verification waited for the producer (the mode-C
-         *  ingenuity: the alias bought work the value path could not). */
+         *  writeback, so verification waited for the producer (the
+         * producer-aliasing ingenuity: the alias bought work the value path
+         * could not). */
         statistics::Scalar aliasVerifyWaitedForProducer;
         /** loadPC->storePC correlator bindings learned from LSQ forwarding. */
         statistics::Scalar bindingsLearned;
 
-        /** Mode-B (value) forwards discarded before they could verify,
+        /** Value-path forwards discarded before they could verify,
          *  indexed by MrnSquashReason. */
         statistics::Vector predictionsSquashedValue;
 
-        /** Mode-C (alias) forwards discarded before they could verify,
+        /** Alias-path forwards discarded before they could verify,
          *  indexed by MrnSquashReason. */
         statistics::Vector predictionsSquashedAlias;
 

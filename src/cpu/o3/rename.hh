@@ -257,11 +257,11 @@ class Rename
     /** Renames the destination registers of an instruction. */
     void renameDestRegs(const DynInstPtr &inst, ThreadID tid);
 
-    /** Garfield MRN (mode C): if this confident load has an in-flight
+    /** Garfield MRN aliasing: if this confident load has an in-flight
      *  producing store whose integer data physreg can be safely aliased,
      *  stash that producer on the instruction and return true. The actual
      *  map surgery happens in renameDestRegs. Returns false (fall back to the
-     *  mode-B value path) when not unified, not a simple int load, no
+     *  value path) when not unified, not a simple int load, no
      *  producer is found, or the producer reg is unsuitable. */
     bool tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid);
 
@@ -320,10 +320,10 @@ class Rename
               aliasLoadReg(nullptr)
         {}
 
-        /** Garfield MRN (mode C): aliasing rename. The arch reg is pointed at
-         *  an in-flight producer's physreg (newPhysReg = the shared producer
-         *  P), and aliasLoadReg is the private physreg the aliased load
-         *  actually writes (for verification). */
+        /** Garfield MRN aliasing: aliasing rename. The arch reg is
+         * pointed at an in-flight producer's physreg (newPhysReg = the shared
+         * producer P), and aliasLoadReg is the private physreg the aliased
+         * load actually writes (for verification). */
         RenameHistory(InstSeqNum _instSeqNum, const RegId &_archReg,
                       PhysRegIdPtr _newPhysReg, PhysRegIdPtr _prevPhysReg,
                       bool _aliased, PhysRegIdPtr _aliasLoadReg)

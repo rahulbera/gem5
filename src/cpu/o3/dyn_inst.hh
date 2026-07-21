@@ -196,7 +196,7 @@ class DynInst : public ExecContext, public RefCounted
                        /// for this load (for confidence training at commit)
         MrnResolved,   /// Garfield: the MRN prediction was resolved (correct
                        /// or mispredicted); a squash must not re-account it
-        MrnAliasStale, /// Garfield (diagnostic): the mode-C alias resolved
+        MrnAliasStale, /// Garfield (diagnostic): the producer alias resolved
                        /// to a physreg different from the one the located
                        /// store captured, i.e. the data arch reg was
                        /// redefined in between
@@ -418,7 +418,7 @@ class DynInst : public ExecContext, public RefCounted
         instFlags[Mrned] = true;
     }
 
-    /** Garfield: the value the mode-B prediction WOULD have used for this
+    /** Garfield: the value the prediction WOULD have used for this
      *  load, snapshotted at rename (for every predictor-eligible integer
      *  load, not only forwarded ones). Confidence is trained against this at
      *  commit so a changing recurrence cannot report a spurious match. */
@@ -456,10 +456,10 @@ class DynInst : public ExecContext, public RefCounted
         instFlags[MrnResolved] = true;
     }
 
-    /** Garfield (diagnostic): mode C aliased to the CURRENT rename-map
-     *  mapping of the store's data arch reg, which differs from the physreg
-     *  the located store itself captured. Tests whether mode C is
-     *  predicting register liveness rather than memory dataflow. */
+    /** Garfield (diagnostic): the producer alias resolved to the CURRENT
+     * rename-map mapping of the store's data arch reg, which differs from the
+     * physreg the located store itself captured. Tests whether producer
+     * aliasing is predicting register liveness rather than memory dataflow. */
     bool
     mrnAliasStale() const
     {
@@ -484,8 +484,8 @@ class DynInst : public ExecContext, public RefCounted
     }
 
     /** Garfield: which MRN forwarding path this load took. NONE = not
-     *  forwarded; VALUE = mode-B value snapshot (verify vs mrnPredVal);
-     *  ALIAS = mode-C producer-register alias (verify vs the producer
+     *  forwarded; VALUE = value snapshot (verify vs mrnPredVal);
+     *  ALIAS = producer aliasing (verify vs the producer
      *  physreg's value). */
     enum MrnPath
     {
@@ -509,8 +509,8 @@ class DynInst : public ExecContext, public RefCounted
         return _mrnPath == MrnAlias;
     }
 
-    /** Garfield (mode C): the in-flight producer's physreg this load is
-     *  aliased to. Its value is the prediction verified at writeback. */
+    /** Garfield MRN aliasing: the in-flight producer's physreg this load
+     * is aliased to. Its value is the prediction verified at writeback. */
     PhysRegIdPtr
     mrnAliasProducer() const
     {
@@ -522,8 +522,8 @@ class DynInst : public ExecContext, public RefCounted
         _mrnAliasProducer = p;
     }
 
-    /** Garfield (mode C): sequence number of the producing store (debug /
-     *  verify timing). */
+    /** Garfield MRN aliasing: sequence number of the producing store
+     * (debug / verify timing). */
     InstSeqNum
     mrnProducerSeq() const
     {
@@ -1173,10 +1173,11 @@ class DynInst : public ExecContext, public RefCounted
     /** Garfield: MRN forwarding path taken by this load. */
     MrnPath _mrnPath = MrnNone;
 
-    /** Garfield (mode C): the in-flight producer physreg this load aliases. */
+    /** Garfield MRN aliasing: the in-flight producer physreg this load
+     * aliases. */
     PhysRegIdPtr _mrnAliasProducer = nullptr;
 
-    /** Garfield (mode C): producing store's sequence number. */
+    /** Garfield MRN aliasing: producing store's sequence number. */
     InstSeqNum _mrnProducerSeq = 0;
 
   public:

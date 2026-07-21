@@ -159,9 +159,10 @@ def add_common_args(
         type=str,
         default="value-only",
         choices=["value-only", "unified"],
-        help="MRN mode: value-only (mode B value snapshot only) or unified "
-        "(mode C, which subsumes B: alias to an in-flight producer's physreg "
-        "when found, else fall back to the B value snapshot).",
+        help="MRN mode: value-only (value-snapshot forwarding only) "
+        "or unified "
+        "(producer aliasing: alias to an in-flight producer's physreg when "
+        "found, else fall back to value forwarding).",
     )
     garfield.add_argument(
         "--mrn-correlation",
@@ -175,7 +176,8 @@ def add_common_args(
     garfield.add_argument(
         "--mrn-train-commit-value",
         action="store_true",
-        help="Mode B: train confidence against the value file as of commit "
+        help="Value forwarding: train confidence against the value "
+        "file as of commit "
         "(the old behaviour) instead of the rename-time snapshot. On by "
         "default the snapshot is used, so a changing recurrence stops "
         "earning spurious confidence.",
@@ -183,7 +185,8 @@ def add_common_args(
     garfield.add_argument(
         "--mrn-alias-allow-stale",
         action="store_true",
-        help="Mode C: alias even when the store's data register was "
+        help="Producer aliasing: alias even when the store's data "
+        "register was "
         "redefined between the located store's rename and the load's "
         "(restores the pre-gate behaviour). Off by default: that case "
         "measured 0-30%% correct versus 100%% when they agree.",
@@ -192,7 +195,7 @@ def add_common_args(
         "--mrn-allow-nonint",
         action="store_true",
         help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
-        "mode B forwards a scalar value, so forwarding a non-integer "
+        "value forwarding uses a scalar, so forwarding a non-integer "
         "(vector/FP) load will panic. Default off (integer loads only).",
     )
     return parser

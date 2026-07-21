@@ -7,9 +7,9 @@ namespace o3
 {
 
 /**
- * Configuration for the ghost-execution policy. Stage 1 carries only the
- * master enable; later stages add per-class enables (value prediction,
- * memory renaming) without touching the datapath.
+ * Configuration for the ghost-execution policy. The initial policy carries
+ * only the master enable; later stages add per-class enables (value
+ * prediction, memory renaming) without touching the datapath.
  */
 struct GhostConfig
 {
@@ -22,8 +22,9 @@ struct GhostConfig
  * executing for correctness. Pure function so it is unit-testable in
  * isolation and so the policy stays the single place that grows per stage.
  *
- * Stage 1: a control uop is ghost when ghosting is enabled. Later stages
- * widen the inputs (isValuePredicted, isMemRenamed) and the GhostConfig.
+ * Initial policy: a control uop is ghost when ghosting is enabled. Later
+ * refinements widen the inputs (isValuePredicted, isMemRenamed) and the
+ * GhostConfig.
  */
 bool ghostPolicy(bool isControl, const GhostConfig &cfg);
 

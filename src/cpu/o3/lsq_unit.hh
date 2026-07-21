@@ -581,25 +581,27 @@ class LSQUnit
     /** Returns the sequence number of the head store instruction. */
     InstSeqNum getStoreHeadSeqNum();
 
-    /** Garfield MRN (mode C): the youngest in-flight store whose PC matches,
-     *  or nullptr. Scans the store queue newest->oldest. */
+    /** Garfield MRN aliasing: the youngest in-flight store whose PC
+     * matches, or nullptr. Scans the store queue newest->oldest. */
     DynInstPtr findYoungestStoreByPC(Addr pc);
 
-    /** Garfield MRN (mode C): a producer physreg just wrote back; verify any
-     *  aliased loads on this unit that were deferred waiting on it. */
+    /** Garfield MRN aliasing: a producer physreg just wrote back;
+     * verify any aliased loads on this unit that were deferred waiting on it.
+     */
     void mrnProducerWroteBack(PhysRegIdPtr producer);
 
-    /** Garfield MRN (mode C): verify an aliased load at its writeback, now if
-     *  the producer is ready or deferred until it writes back. */
+    /** Garfield MRN aliasing: verify an aliased load at its
+     * writeback, now if the producer is ready or deferred until it writes
+     * back. */
     void mrnCheckAlias(const DynInstPtr &load);
 
     /** Returns whether or not the LSQ unit is stalled. */
     bool isStalled()  { return stalled; }
 
   private:
-    /** Garfield MRN (mode C): an aliased load whose producer physreg was not
-     *  ready at the load's writeback; verification waits until the producer
-     *  writes back (drained by mrnProducerWroteBack). */
+    /** Garfield MRN aliasing: an aliased load whose producer physreg
+     * was not ready at the load's writeback; verification waits until the
+     * producer writes back (drained by mrnProducerWroteBack). */
     struct MrnPendingVerify
     {
         DynInstPtr load;
@@ -607,8 +609,8 @@ class LSQUnit
     };
     std::vector<MrnPendingVerify> mrnPendingVerify;
 
-    /** Garfield MRN (mode C): compare an aliased load's loaded value to its
-     *  producer physreg's value; squash from the load (inclusive) on a
+    /** Garfield MRN aliasing: compare an aliased load's loaded value
+     * to its producer physreg's value; squash from the load (inclusive) on a
      *  mismatch, else train the predictor that the alias verified. */
     void mrnVerifyAlias(const DynInstPtr &load);
 

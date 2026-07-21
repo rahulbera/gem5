@@ -1402,14 +1402,14 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
     // Update the commit rename map
     for (int i = 0; i < head_inst->numDestRegs(); i++) {
         PhysRegIdPtr arch_phys = head_inst->renamedDestIdx(i);
-        // Garfield MRN (mode C): an aliased load's renamedDestIdx is its
-        // private verification register (L), which is reclaimed when the load
-        // retires -- it is NOT the architectural value of the destination.
-        // Record the producer P instead: it is the live, verified-equal
-        // physreg the load's consumers read, so the architectural map obeys
-        // the normal lifetime rule (this commit frees the previous mapping;
-        // P persists until the next writer of this reg commits) and never
-        // points at the reclaimed L.
+        // Garfield MRN aliasing: an aliased load's renamedDestIdx is
+        // its private verification register (L), which is reclaimed when the
+        // load retires -- it is NOT the architectural value of the
+        // destination. Record the producer P instead: it is the live,
+        // verified-equal physreg the load's consumers read, so the
+        // architectural map obeys the normal lifetime rule (this commit frees
+        // the previous mapping; P persists until the next writer of this reg
+        // commits) and never points at the reclaimed L.
         if (head_inst->mrnAliased() && i == 0) {
             arch_phys = head_inst->mrnAliasProducer();
         }

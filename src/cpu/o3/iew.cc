@@ -946,8 +946,8 @@ IEW::dispatchInsts(ThreadID tid)
             continue;
         }
 
-        // Garfield Stage 1: tag control uops as ghost so the backend skips
-        // their IQ entry, issue bandwidth, and execution port.
+        // Garfield ghost execution: tag control uops as ghost so the backend
+        // skips their IQ entry, issue bandwidth, and execution port.
         if (ghostPolicy(inst->isControl(), ghostCfg)) {
             inst->setGhost();
         }
@@ -1429,10 +1429,10 @@ IEW::writebackInsts()
                             inst->renamedDestIdx(i)->className());
                     scoreboard->setReg(inst->renamedDestIdx(i));
 
-                    // Garfield MRN (mode C): this physreg just became ready,
-                    // so its value is available. Verify any aliased loads
-                    // that were deferred waiting on this producer. Gated on
-                    // unified mode so off / value_only are byte-identical.
+                    // Garfield MRN aliasing: this physreg just became
+                    // ready, so its value is available. Verify any aliased
+                    // loads that were deferred waiting on this producer. Gated
+                    // on unified mode so off / value_only are byte-identical.
                     if (memRenamePred && memRenamePred->unified()) {
                         ldstQueue.mrnProducerWroteBack(
                             tid, inst->renamedDestIdx(i));

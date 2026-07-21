@@ -251,8 +251,8 @@ class IEW
         return memRenamePred;
     }
 
-    /** Garfield MRN (mode C): whether a physical register is ready (its
-     *  producer has written back). The LSQ uses this at an aliased load's
+    /** Garfield MRN aliasing: whether a physical register is ready
+     * (its producer has written back). The LSQ uses this at an aliased load's
      *  writeback to decide whether to verify now or defer. */
     bool
     isRegReady(PhysRegIdPtr phys_reg) const

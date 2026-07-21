@@ -57,9 +57,9 @@ enum class MrnSquashReason
     Branch,
     /** A real memory-order violation: store->load, or load->load by snoop. */
     MemOrder,
-    /** An OLDER mode-B (value) MRN mispredict squashed this load. */
+    /** An OLDER value-forwarding MRN mispredict squashed this load. */
     MrnValue,
-    /** An OLDER mode-C (alias) MRN mispredict squashed this load. */
+    /** An OLDER producer-aliasing MRN mispredict squashed this load. */
     MrnAlias,
     /** Trap, interrupt, ReExec, HTM abort, TC write, drain, squash-after. */
     Other,

@@ -1073,9 +1073,9 @@ LSQUnit::squash(const InstSeqNum &squashed_num)
     }
     stats.sqAvgOccupancy = queueOccupancy(storeQueue);
 
-    // Garfield MRN (mode C): drop deferred alias-verify entries for squashed
-    // loads. Their private destination may be freed and they must not be
-    // verified (or trigger a redundant squash) when their producer later
+    // Garfield MRN aliasing: drop deferred alias-verify entries for
+    // squashed loads. Their private destination may be freed and they must not
+    // be verified (or trigger a redundant squash) when their producer later
     // writes back.
     if (!mrnPendingVerify.empty()) {
         for (auto it = mrnPendingVerify.begin();
@@ -1150,9 +1150,9 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             // completeAcc the load's own renamed destination holds the
             // architecturally correct value. The verify branches on the
             // forwarding path:
-            //   VALUE (mode B): compare the loaded value to the snapshot
+            //   VALUE: compare the loaded value to the snapshot
             //     forwarded at rename, immediately.
-            //   ALIAS (mode C): the load was aliased to an in-flight
+            //   ALIAS: the load was aliased to an in-flight
             //     producer's physreg. Verify at MAX(load-resolve,
             //     producer-resolve): if the producer is already ready, verify
             //     now; otherwise defer until the producer writes back.
@@ -1578,7 +1578,7 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                         "addr %#x\n", store_it._idx,
                         request->mainReq()->getVaddr());
 
-                // Garfield MRN (mode C, C.1 correlator): this load fully
+                // Garfield MRN correlator (LSQ-forward): this load fully
                 // forwarded from this store, so bind loadPC -> storePC. At a
                 // future instance of this load PC, rename can find the
                 // (youngest in-flight) store with this PC and alias the load

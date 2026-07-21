@@ -37,11 +37,11 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(squashedInsts, statistics::units::Count::get(),
                "Instructions discarded by MRN misprediction squashes"),
       ADD_STAT(forwardsValue, statistics::units::Count::get(),
-               "High-confidence loads forwarded via the mode-B value "
+               "High-confidence loads forwarded via the value snapshot "
                "snapshot"),
       ADD_STAT(forwardsAlias, statistics::units::Count::get(),
                "High-confidence loads aliased to an in-flight producer's "
-               "physreg (mode C)"),
+               "physreg (producer aliasing)"),
       ADD_STAT(aliasVerifyCorrect, statistics::units::Count::get(),
                "Aliased loads that verified correct at writeback"),
       ADD_STAT(aliasMispredicts, statistics::units::Count::get(),
@@ -53,10 +53,10 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "loadPC->storePC correlator bindings learned from LSQ "
                "forwarding"),
       ADD_STAT(predictionsSquashedValue, statistics::units::Count::get(),
-               "Mode-B (value) forwards squashed before they could verify, "
+               "Value-path forwards squashed before they could verify, "
                "by squash reason"),
       ADD_STAT(predictionsSquashedAlias, statistics::units::Count::get(),
-               "Mode-C (alias) forwards squashed before they could verify, "
+               "Alias-path forwards squashed before they could verify, "
                "by squash reason"),
       ADD_STAT(aliasProducerCurrent, statistics::units::Count::get(),
                "Alias attempts whose rename-map lookup matched the located "

@@ -747,9 +747,9 @@ Rename::renameInsts(ThreadID tid)
         renameSrcRegs(inst, inst->threadNumber);
 
         // Garfield MRN: decide a load's forwarding path *before* renaming its
-        // destination, so a producer-register alias (mode C) can divert the
+        // destination, so a producer-register alias can divert the
         // destination map entry. predict() yields both the confidence and the
-        // mode-B value snapshot used when no in-flight producer is found.
+        // value snapshot used when no in-flight producer is found.
         MrnPrediction mrnPred{false, 0};
         bool mrnAliased = false;
         if (memRenamePred && inst->isLoad() && inst->numDestRegs() > 0) {
@@ -772,15 +772,15 @@ Rename::renameInsts(ThreadID tid)
 
         renameDestRegs(inst, inst->threadNumber);
 
-        // Garfield MRN value path (mode B): if the predictor has a
+        // Garfield MRN value forwarding: if the predictor has a
         // high-confidence value for this load and it was not aliased to a
         // producer, forward the snapshot into the renamed destination and
         // mark it ready so dependents can wake early. The load still executes
         // normally; writeback verifies the forwarded value and squashes from
         // the load (inclusive) on a mismatch. Restrict to integer
-        // destinations: mode B forwards a scalar RegVal, and the RegVal setReg
-        // path panics on full vector registers. Skip fixed-mapping dests
-        // (e.g. the zero register), which are not renameable.
+        // destinations: value forwarding uses a scalar RegVal, and the RegVal
+        // setReg path panics on full vector registers. Skip fixed-mapping
+        // dests (e.g. the zero register), which are not renameable.
         if (mrnPred.valid && !mrnAliased) {
             PhysRegIdPtr dest = inst->renamedDestIdx(0);
             if (dest->is(IntRegClass)) {
@@ -799,23 +799,24 @@ Rename::renameInsts(ThreadID tid)
                             mrnPred.value);
                 }
             } else if (!memRenamePred->predictIntLoadsOnly()) {
-                // Mode B forwards a scalar RegVal; the regfile path panics
-                // on full vector registers. Integer-only is enforced by
+                // Value forwarding uses a scalar RegVal; the regfile path
+                // panics on full vector registers. Integer-only is enforced by
                 // default (predictIntLoadsOnly); relaxing it for a
                 // non-integer load fails loudly rather than corrupting
                 // wide state.
-                panic("MRN: value forwarding requested for a non-integer "
-                      "load (dest reg class %d, PC %s). Mode B forwards a "
-                      "scalar RegVal and supports integer-destination "
-                      "loads only. Keep predictIntLoadsOnly=True "
-                      "(default), or implement wide-value forwarding "
-                      "before relaxing it.",
-                      (int)dest->classValue(), inst->pcState());
+                panic(
+                    "MRN: value forwarding requested for a non-integer "
+                    "load (dest reg class %d, PC %s). Value forwarding uses a "
+                    "scalar RegVal and supports integer-destination "
+                    "loads only. Keep predictIntLoadsOnly=True "
+                    "(default), or implement wide-value forwarding "
+                    "before relaxing it.",
+                    (int)dest->classValue(), inst->pcState());
             }
         } else if (mrnAliased) {
-            // Mode C: renameDestRegs pointed the load's destination at the
-            // in-flight producer's physreg. Mark it memory-renamed for the
-            // writeback verify (vs. the producer's value).
+            // Producer aliasing: renameDestRegs pointed the load's destination
+            // at the in-flight producer's physreg. Mark it memory-renamed for
+            // the writeback verify (vs. the producer's value).
             inst->setMrned();
             memRenamePred->noteForwarded();
             memRenamePred->noteForwardAlias();
@@ -1042,9 +1043,10 @@ Rename::doSquash(const InstSeqNum &squashed_seq_num, ThreadID tid)
             freeingInProgress[tid].push_back(hb_it->newPhysReg);
         }
 
-        // Garfield MRN (mode C): an aliased load also allocated a private
-        // physreg (aliasLoadReg) that the map never pointed at; release it on
-        // squash. Its refcount is 1, so it goes back on the free list.
+        // Garfield MRN aliasing: an aliased load also allocated a
+        // private physreg (aliasLoadReg) that the map never pointed at;
+        // release it on squash. Its refcount is 1, so it goes back on the free
+        // list.
         if (hb_it->aliased && hb_it->aliasLoadReg) {
             freeingInProgress[tid].push_back(hb_it->aliasLoadReg);
         }
@@ -1131,9 +1133,10 @@ Rename::removeFromHistory(InstSeqNum inst_seq_num, ThreadID tid)
             }
         }
 
-        // Garfield MRN (mode C): free the aliased load's private physreg at
-        // commit -- it is dead once the load has been verified, and the map
-        // never pointed at it (so it is not freed by any other commit).
+        // Garfield MRN aliasing: free the aliased load's private
+        // physreg at commit -- it is dead once the load has been verified, and
+        // the map never pointed at it (so it is not freed by any other
+        // commit).
         if (hb_it->aliased && hb_it->aliasLoadReg) {
             if (hb_it->aliasLoadReg->decrRefCount() == 0) {
                 freeList->addReg(hb_it->aliasLoadReg);
@@ -1296,14 +1299,14 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     // between that store's rename and this load's rename, so the alias is a
     // bet on register LIVENESS rather than on memory dataflow.
     //
-    // Measured on 10M warmup + 50M detailed, mode C:
+    // Measured on 10M warmup + 50M detailed, producer aliasing:
     //   agree    -> 100.0% correct (n=155 across gcc+cpython, zero errors)
     //   disagree ->  29.9% on 721.gcc_r.2.0, 0.0% on 714.cpython_r.2.3
     // and the disagreeing case is 96-100% of all alias attempts, so it
     // accounts for essentially every alias mispredict.
     //
     // Rejecting here does not lose the prediction: the caller falls through
-    // to the mode-B value snapshot (see the `mrnPred.valid && !mrnAliased`
+    // to the value snapshot (see the `mrnPred.valid && !mrnAliased`
     // branch in renameInsts), which verifies far better on the same loads.
     const PhysRegIdPtr store_captured = store->renamedSrcIdx(n - 1);
     const bool stale = (store_captured != producer);
@@ -1346,9 +1349,9 @@ Rename::renameDestRegs(const DynInstPtr &inst, ThreadID tid)
 
         inst->flattenedDestIdx(dest_idx, flat_dest_regid);
 
-        // Garfield MRN (mode C): alias this load's value destination to the
-        // in-flight producer's physreg. map->rename() already allocated a
-        // private physreg (rename_result.first = L) and pointed the arch reg
+        // Garfield MRN aliasing: alias this load's value destination
+        // to the in-flight producer's physreg. map->rename() already allocated
+        // a private physreg (rename_result.first = L) and pointed the arch reg
         // at it with normal pinned-write bookkeeping; the load executes into
         // L and is verified from it. Re-point the arch reg at the producer P
         // so the load's consumers read the producer's value and wake when the

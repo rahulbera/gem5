@@ -3,15 +3,20 @@
 Running list of candidate fixes for the memory-rename predictor, so ideas
 don't get lost between sessions. Newest evidence at the bottom of each entry.
 
-Baseline for all numbers: 10M warmup + 50M detailed, Neoverse V2 FS restore,
-checkpoints `721.gcc_r.2.0` and `708.sqlite_r.2.2`. MRN is currently a **net
-loss** on both (mean speedup 0.9602 after the alias gate, against 1.0 for no
-MRN at all), so the bar for any change is "does it move accuracy", not "does
-it move coverage".
+Baseline for all numbers: 10M warmup + 50M detailed, Neoverse V2 FS restore.
+
+**Fleet status (190-checkpoint sweep, current branch = 1a + alias gate):**
+geomean speedup **1.0001**, mean coverage 6.22%, verified accuracy 92.0%.
+61/190 checkpoints beat 1.0; spread 0.928-1.358. This is up from **0.985**
+pre-1a -- 1a took MRN from a 1.5% net TAX to break-even. Results in
+`runs/mrn_sweep_1a/` (`summary.csv`, `aggregate.py`). MRN is no longer a
+loss, but not yet a win; the bar for any change is "does it move the geomean
+above 1.0", and forwarding accurate values only helps when the loads are
+latency-critical (see cppcheck: 14% cov, 98% acc, still 0.985).
 
 ---
 
-## 1a. Mode B trains optimistically (confirmed — IMPLEMENTING)
+## 1a. Value forwarding trains optimistically (confirmed — IMPLEMENTING)
 
 **Key idea.** `predict()` reads `valueFile[slot]` at **rename**;
 `commitLoad()` trains confidence by comparing against `valueFile[slot]` at
@@ -52,27 +57,29 @@ win.
 ## 1b. Modes B and C should have independent gates (DEFERRED — after 1a)
 
 **Key idea.** `rename.cc` calls `tryMemRenameAlias` only when `mrnPred.valid`,
-so mode C fires only when **mode B's** confidence is above threshold, and mode
-C is tried FIRST when it does. Two changes: give mode C its own confidence
-counter and gate, and reverse the priority so mode B (the conservative value
-forward) is tried first and mode C is the fallback when B declines.
+so producer aliasing fires only when **value forwarding's** confidence is
+above threshold, and aliasing is tried FIRST when it does. Two changes: give
+producer aliasing its own confidence counter and gate, and reverse the
+priority so value forwarding (the conservative path) is tried first and
+aliasing is the fallback when value forwarding declines.
 
 **Motivation update — the original framing is refuted, but the fix still has
-merit.** The shadow probe measured mode C's accuracy independent of mode B's
-gate: **14.1% on gcc, 0.7% on sqlite** overall. It is the WEAKER predictor
-everywhere, so "hand mode B's misses to mode C" does not work — where both
-apply, C-right-B-wrong is 12.1% (gcc) / 0.5% (sqlite), and a mode-C producer
-exists for only ~5% of mode-B-eligible loads at all (`shadowCNoProducer`
-95.9% / 94.2%).
+merit.** The shadow probe measured producer aliasing's accuracy independent
+of the value path's gate: **14.1% on gcc, 0.7% on sqlite** overall. It is the
+WEAKER predictor everywhere, so "hand the value path's misses to aliasing"
+does not work — where both apply, aliasing-right-value-wrong is 12.1% (gcc) /
+0.5% (sqlite), and a producer exists for only ~5% of value-forwarding-eligible
+loads at all (`shadowCNoProducer` 95.9% / 94.2%).
 
-BUT: mode C on **current** (non-stale) producers is **96.8%** (gcc) / 76.1%
-(sqlite) accurate — it is only the stale producers that drag it to chance,
-and those are 99.5% of producers. So mode C's real problem is that it has no
+BUT: producer aliasing on **current** (non-stale) producers is **96.8%** (gcc)
+/ 76.1% (sqlite) accurate — it is only the stale producers that drag it to
+chance, and those are 99.5% of producers. So aliasing's real problem is it has
+no
 confidence mechanism of its own to select the loads it is good at; the alias
 gate (commit `a6f9565837`) is a crude one-bit version of exactly that. A
 proper per-binding confidence counter is the natural next step, and is why
-independent gates are still worth building — but as a way to make mode C
-*selective*, not to expand its reach. Expected outcome: mode C coverage tiny
+independent gates are still worth building — but as a way to make aliasing
+*selective*, not to expand its reach. Expected outcome: aliasing coverage tiny
 but high-accuracy.
 
 **Status:** deferred until 1a lands and is measured.
@@ -122,7 +129,7 @@ be ranked against #1. Sizing argument only so far.
 
 ## Resolved / refuted — don't re-litigate
 
-- **Mode C aliased to register liveness, not memory dataflow.** `rename.cc`
+- **Producer aliasing bet on register liveness, not memory dataflow.** `rename.cc`
   aliased to `renameMap->lookup(store's data arch reg)` rather than the
   physreg the located store captured. Measured 100% correct when the two
   agree (n=155, zero errors) vs 29.9% (gcc) / 0.0% (cpython) when they

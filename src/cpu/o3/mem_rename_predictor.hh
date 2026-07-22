@@ -288,22 +288,55 @@ class MemRenamePredictor : public SimObject
         return tables.predictProducerPC(loadPC);
     }
 
-    /** LSQ store->load forward: score the correlator's current binding for
-     *  this load against the store it ACTUALLY forwarded from (the ground
-     *  truth). Called just before trainForward updates the binding. Measures
-     *  the producer-PC prediction in isolation from the physreg-liveness
-     *  question that aliasVerifyCorrect/aliasMispredicts also fold in. */
+    /** COVERAGE: at each LSQ store->load forward, score the correlator's
+     *  current binding against the store it ACTUALLY forwarded from. The
+     *  denominator is true forwards -- "of real forwards, how many does the
+     *  correlator already capture". Called just before trainForward updates
+     *  the binding. */
     void
-    noteProducerPredict(Addr loadPC, Addr actualStorePC)
+    noteProducerCoverage(Addr loadPC, Addr actualStorePC)
     {
         const Addr pred = tables.peekProducerPC(loadPC);
         if (pred == 0) {
-            stats.producerPredictUntrained++;
+            stats.producerCoverageUntrained++;
         } else if (pred == actualStorePC) {
+            stats.producerCoverageCorrect++;
+        } else {
+            stats.producerCoverageWrong++;
+        }
+    }
+
+    /** ACCURACY (denominator = predictions MADE): the correlator produced a
+     *  storePC prediction for a load at rename. Counted at the prediction
+     *  site; the outcome is resolved later by noteProducerPredictOutcome. */
+    void
+    noteProducerPredictMade()
+    {
+        stats.producerPredictMade++;
+    }
+
+    /** ACCURACY: resolve a made prediction at writeback -- confirmed = the
+     *  load actually forwarded from the predicted storePC. */
+    void
+    noteProducerPredictOutcome(bool confirmed)
+    {
+        if (confirmed) {
             stats.producerPredictCorrect++;
         } else {
             stats.producerPredictWrong++;
         }
+    }
+
+    /** ACCURACY: a made prediction whose load was squashed before it could be
+     *  validated at writeback. Counted separately (like the coverage buckets)
+     *  so accuracy can be computed either way:
+     *    incl. squashed = correct / made
+     *    excl. squashed = correct / (correct + wrong)
+     *  where made == correct + wrong + squashed. */
+    void
+    noteProducerPredictSquashed()
+    {
+        stats.producerPredictSquashed++;
     }
 
     /** Rename: a load was forwarded via the value snapshot. */
@@ -470,16 +503,24 @@ class MemRenamePredictor : public SimObject
         /** loadPC->storePC correlator bindings learned from LSQ forwarding. */
         statistics::Scalar bindingsLearned;
 
-        /** Correlator producer-PC prediction scored against the true
-         *  producing store at each LSQ forward: the binding existed and
-         *  matched the store the load actually forwarded from. */
-        statistics::Scalar producerPredictCorrect;
-
+        /** COVERAGE (denominator = true LSQ forwards): at each forward the
+         *  correlator's binding matched the store the load forwarded from. */
+        statistics::Scalar producerCoverageCorrect;
         /** ...the binding existed but named a different store PC. */
-        statistics::Scalar producerPredictWrong;
+        statistics::Scalar producerCoverageWrong;
+        /** ...no binding existed yet (first forward for this load PC). */
+        statistics::Scalar producerCoverageUntrained;
 
-        /** ...no binding existed yet (first forward seen for this load PC). */
-        statistics::Scalar producerPredictUntrained;
+        /** ACCURACY (denominator = predictions MADE): the correlator produced
+         *  a storePC prediction for a load at rename. */
+        statistics::Scalar producerPredictMade;
+        /** ...and the load actually forwarded from that predicted store PC. */
+        statistics::Scalar producerPredictCorrect;
+        /** ...and it did NOT (forwarded from another store, or not at all). */
+        statistics::Scalar producerPredictWrong;
+        /** ...and the load was squashed before writeback could validate it
+         *  (made == correct + wrong + squashed). */
+        statistics::Scalar producerPredictSquashed;
 
         /** Value-path forwards discarded before they could verify,
          *  indexed by MrnSquashReason. */

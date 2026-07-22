@@ -200,6 +200,15 @@ class DynInst : public ExecContext, public RefCounted
                        /// to a physreg different from the one the located
                        /// store captured, i.e. the data arch reg was
                        /// redefined in between
+        MrnProducerPredicted, /// Garfield: the correlator predicted a
+                              /// producing store PC for this load at rename
+                              /// (see _mrnPredStorePC)
+        MrnProducerConfirmed, /// Garfield: this load actually forwarded from
+                              /// the predicted store PC (the prediction was
+                              /// correct)
+        MrnProducerResolved,  /// Garfield: the producer-PC prediction has been
+                              /// accounted (correct/wrong at writeback, or
+                              /// squashed); prevents double-counting
         MaxFlags
     };
 
@@ -469,6 +478,47 @@ class DynInst : public ExecContext, public RefCounted
     setMrnAliasStale()
     {
         instFlags[MrnAliasStale] = true;
+    }
+
+    /** Garfield: the correlator's predicted producing store PC for this load,
+     *  snapshotted at rename. Confirmed at the LSQ forward against the store
+     *  the load actually forwards from, to measure the correlator's precision
+     *  (of predictions MADE, how many are correct). */
+    bool
+    mrnProducerPredicted() const
+    {
+        return instFlags[MrnProducerPredicted];
+    }
+    Addr
+    mrnPredStorePC() const
+    {
+        return _mrnPredStorePC;
+    }
+    void
+    setMrnProducerPredicted(Addr storePC)
+    {
+        instFlags[MrnProducerPredicted] = true;
+        _mrnPredStorePC = storePC;
+    }
+    bool
+    mrnProducerConfirmed() const
+    {
+        return instFlags[MrnProducerConfirmed];
+    }
+    void
+    setMrnProducerConfirmed()
+    {
+        instFlags[MrnProducerConfirmed] = true;
+    }
+    bool
+    mrnProducerResolved() const
+    {
+        return instFlags[MrnProducerResolved];
+    }
+    void
+    setMrnProducerResolved()
+    {
+        instFlags[MrnProducerResolved] = true;
     }
 
     /** Garfield: MRN-predicted value snapshotted for this load. */
@@ -1179,6 +1229,9 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield MRN aliasing: producing store's sequence number. */
     InstSeqNum _mrnProducerSeq = 0;
+
+    /** Garfield: correlator-predicted producing store PC (0 if none). */
+    Addr _mrnPredStorePC = 0;
 
   public:
     // Value -1 indicates that particular phase

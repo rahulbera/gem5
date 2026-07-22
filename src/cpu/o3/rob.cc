@@ -361,6 +361,15 @@ ROB::doSquash(ThreadID tid)
                                             mrnSquashReason[tid]);
             }
         }
+        // Producer-PC prediction (accuracy) squashed before validation.
+        if (squashing->mrnProducerPredicted() &&
+            !squashing->mrnProducerResolved()) {
+            squashing->setMrnProducerResolved();
+            MemRenamePredictor *mrn = cpu->getMemRenamePred();
+            if (mrn) {
+                mrn->noteProducerPredictSquashed();
+            }
+        }
 
         // Mark the instruction as squashed, and ready to commit so that
         // it can drain out of the pipeline.

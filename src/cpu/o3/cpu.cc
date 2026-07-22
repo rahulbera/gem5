@@ -1288,6 +1288,14 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
                                             rob.getMrnSquashReason(tid));
             }
         }
+        // Producer-PC prediction (accuracy) squashed before validation.
+        if (inst->mrnProducerPredicted() && !inst->mrnProducerResolved()) {
+            inst->setMrnProducerResolved();
+            MemRenamePredictor *mrn = getMemRenamePred();
+            if (mrn) {
+                mrn->noteProducerPredictSquashed();
+            }
+        }
 
         // Mark it as squashed.
         (*instIt)->setSquashed();

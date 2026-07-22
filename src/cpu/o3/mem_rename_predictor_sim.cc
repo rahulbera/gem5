@@ -53,15 +53,27 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(bindingsLearned, statistics::units::Count::get(),
                "loadPC->storePC correlator bindings learned from LSQ "
                "forwarding"),
-      ADD_STAT(producerPredictCorrect, statistics::units::Count::get(),
-               "LSQ forwards where the correlator's binding matched the "
-               "store the load actually forwarded from"),
-      ADD_STAT(producerPredictWrong, statistics::units::Count::get(),
-               "LSQ forwards where the correlator's binding named a "
+      ADD_STAT(producerCoverageCorrect, statistics::units::Count::get(),
+               "COVERAGE: LSQ forwards where the correlator's binding matched "
+               "the store the load actually forwarded from"),
+      ADD_STAT(producerCoverageWrong, statistics::units::Count::get(),
+               "COVERAGE: LSQ forwards where the correlator's binding named a "
                "different store PC than the actual producer"),
-      ADD_STAT(producerPredictUntrained, statistics::units::Count::get(),
-               "LSQ forwards where the correlator had no binding yet for "
-               "this load PC"),
+      ADD_STAT(producerCoverageUntrained, statistics::units::Count::get(),
+               "COVERAGE: LSQ forwards where the correlator had no binding "
+               "yet for this load PC"),
+      ADD_STAT(producerPredictMade, statistics::units::Count::get(),
+               "ACCURACY denominator: producer-PC predictions the correlator "
+               "made at rename"),
+      ADD_STAT(producerPredictCorrect, statistics::units::Count::get(),
+               "ACCURACY: made predictions where the load actually forwarded "
+               "from the predicted store PC"),
+      ADD_STAT(producerPredictWrong, statistics::units::Count::get(),
+               "ACCURACY: made predictions where the load did not forward "
+               "from the predicted store PC"),
+      ADD_STAT(producerPredictSquashed, statistics::units::Count::get(),
+               "ACCURACY: made predictions whose load was squashed before "
+               "writeback could validate it (made = correct+wrong+squashed)"),
       ADD_STAT(predictionsSquashedValue, statistics::units::Count::get(),
                "Value-path forwards squashed before they could verify, "
                "by squash reason"),

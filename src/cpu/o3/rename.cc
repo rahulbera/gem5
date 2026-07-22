@@ -1252,6 +1252,13 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     if (!store_pc) {
         return false;
     }
+    // ACCURACY: the correlator made a producer-PC prediction. Snapshot it on
+    // the load and count it; the LSQ forward confirms whether the load really
+    // forwarded from this store, and writeback resolves correct/wrong. Done
+    // here, before the downstream in-flight-store / staleness gates, so the
+    // denominator is predictions MADE regardless of whether we alias.
+    inst->setMrnProducerPredicted(store_pc);
+    memRenamePred->noteProducerPredictMade();
 
     DynInstPtr store = iew_ptr->ldstQueue.findYoungestStoreByPC(tid, store_pc);
     if (!store || !store->isStore() || store->numSrcRegs() == 0) {

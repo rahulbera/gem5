@@ -1146,6 +1146,18 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             // Complete access to copy data to proper place.
             inst->completeAcc(pkt);
 
+            // Garfield MRN ACCURACY: resolve a made producer-PC prediction.
+            // The load has executed; it was confirmed at the LSQ forward iff
+            // it actually forwarded from the predicted store. Squashed loads
+            // return early above, so they are excluded from the denominator.
+            if (inst->mrnProducerPredicted() && !inst->mrnProducerResolved()) {
+                inst->setMrnProducerResolved();
+                if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+                    mrn->noteProducerPredictOutcome(
+                        inst->mrnProducerConfirmed());
+                }
+            }
+
             // Garfield MRN: verify a forwarded (memory-renamed) load. After
             // completeAcc the load's own renamed destination holds the
             // architecturally correct value. The verify branches on the
@@ -1589,10 +1601,17 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                     const Addr load_pc = load_inst->pcState().instAddr();
                     const Addr store_pc =
                         store_it->instruction()->pcState().instAddr();
-                    // Score the correlator's current binding against the
-                    // store this load actually forwarded from, before
-                    // training updates it.
-                    mrn->noteProducerPredict(load_pc, store_pc);
+                    // ACCURACY: this load forwarded from store_pc; if the
+                    // correlator predicted a producer for it at rename,
+                    // confirm the prediction when the two match (writeback
+                    // then resolves correct/wrong).
+                    if (load_inst->mrnProducerPredicted() &&
+                        load_inst->mrnPredStorePC() == store_pc) {
+                        load_inst->setMrnProducerConfirmed();
+                    }
+                    // COVERAGE: score the correlator's current binding against
+                    // the store the load actually forwarded from, then train.
+                    mrn->noteProducerCoverage(load_pc, store_pc);
                     mrn->trainForward(load_pc, store_pc);
                 }
 

@@ -66,31 +66,43 @@ rode the value path's confidence. Default (value-only) is byte-identical bar
 the now-unmaintained `bindingsLearned` (no timing effect). Priority when both
 on: aliasing-first. See `docs/superpowers/specs/2026-07-21-mrn-path-separation`.
 
-**Still deferred: give producer aliasing its own confidence counter.** Today
-aliasing fires whenever the correlator has a binding + the current-producer
-gate passes — no confidence of its own. That is the next step (make aliasing
-*selective*).
+**The correlator is NOT the problem — the value delivery is.** New stat
+(commit `bff5438a28`, `producerPredictCorrect/Wrong/Untrained`, scored at the
+LSQ forward against the true producing store) measures the correlator's
+loadPC->storePC prediction in isolation: **99.6% accurate on gcc** (357,271 of
+358,614 with-binding forwards). Yet aliasing fires on only **1,702** loads — a
+**200x gap**. So the storePC predictor is near-perfect; ~99.5% of correctly
+predicted producers are lost DOWNSTREAM, in how the value is delivered:
+  1. at the load's rename the youngest in-flight store with that PC often is
+     not in the SQ yet (same-iteration producer not dispatched);
+  2. when it is, the alias reads `renameMap.lookup(store's data arch reg)`,
+     which is a stale physreg 99.5% of the time (the liveness bug), so the
+     `aliasRequireCurrentProducer` gate correctly rejects it.
 
-**Motivation update — the original framing is refuted, but the fix still has
-merit.** The shadow probe measured producer aliasing's accuracy independent
-of the value path's gate: **14.1% on gcc, 0.7% on sqlite** overall. It is the
-WEAKER predictor everywhere, so "hand the value path's misses to aliasing"
-does not work — where both apply, aliasing-right-value-wrong is 12.1% (gcc) /
-0.5% (sqlite), and a producer exists for only ~5% of value-forwarding-eligible
-loads at all (`shadowCNoProducer` 95.9% / 94.2%).
+This SEPARATES what `aliasVerifyCorrect` had conflated: *which* store produced
+the value (correlator: 99.6% right) vs *how* to read that store's value at the
+load's rename (~99.5% lost).
 
-BUT: producer aliasing on **current** (non-stale) producers is **96.8%** (gcc)
-/ 76.1% (sqlite) accurate — it is only the stale producers that drag it to
-chance, and those are 99.5% of producers. So aliasing's real problem is it has
-no
-confidence mechanism of its own to select the loads it is good at; the alias
-gate (commit `a6f9565837`) is a crude one-bit version of exactly that. A
-proper per-binding confidence counter is the natural next step, and is why
-independent gates are still worth building — but as a way to make aliasing
-*selective*, not to expand its reach. Expected outcome: aliasing coverage tiny
-but high-accuracy.
+**Retract: a per-binding confidence counter is the WRONG next step.** Gating a
+99.6%-accurate correlator harder cannot help — the loss is not mis-prediction,
+it is value delivery. (Superseded: earlier notes here proposed a confidence
+counter; the isolation stat shows the correlator does not need it.)
 
-**Status:** deferred until 1a lands and is measured.
+## 1c. Fix aliasing value delivery (NEXT — design in progress)
+
+**Problem.** A correctly-named producing store's value does not reach the load.
+The alias points the load's destination at `renameMap.lookup(data_arch)` — the
+CURRENT mapping of the store's data arch reg at the LOAD's rename — rather than
+the physreg the producing store instance actually writes. For a changing
+recurrence that arch reg is redefined between the store and the load, so the
+lookup is stale.
+
+**Direction (to be designed).** Deliver the value from the *specific producing
+store instance* the correlator named, not from an arch-reg lookup: e.g. alias
+to the store's own captured data physreg tracked by seqNum, and resolve at
+MAX(load-ready, producer-ready). Timing constraint to solve: the same-iteration
+store may not be in the SQ at the load's rename. See the current-value-delivery
+rundown and the forthcoming design.
 
 ---
 

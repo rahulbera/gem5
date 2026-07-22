@@ -1586,9 +1586,14 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                 // when the aliasing path is enabled.
                 MemRenamePredictor *mrn = iewStage->getMemRenamePred();
                 if (mrn && mrn->aliasingEnabled()) {
-                    mrn->trainForward(
-                        load_inst->pcState().instAddr(),
-                        store_it->instruction()->pcState().instAddr());
+                    const Addr load_pc = load_inst->pcState().instAddr();
+                    const Addr store_pc =
+                        store_it->instruction()->pcState().instAddr();
+                    // Score the correlator's current binding against the
+                    // store this load actually forwarded from, before
+                    // training updates it.
+                    mrn->noteProducerPredict(load_pc, store_pc);
+                    mrn->trainForward(load_pc, store_pc);
                 }
 
                 PacketPtr data_pkt = new Packet(request->mainReq(),

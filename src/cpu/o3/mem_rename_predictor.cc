@@ -268,6 +268,27 @@ MrnTables::fwdFind(Addr loadPC)
     return nullptr;
 }
 
+const MrnTables::FwdEntry *
+MrnTables::fwdFind(Addr loadPC) const
+{
+    const unsigned set = static_cast<unsigned>(loadPC % loadSets);
+    const unsigned firstWay = set * loadAssoc;
+    for (unsigned w = 0; w < loadAssoc; ++w) {
+        const FwdEntry &e = fwdCache[firstWay + w];
+        if (e.valid && e.tag == loadPC) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+Addr
+MrnTables::peekProducerPC(Addr loadPC) const
+{
+    const FwdEntry *e = fwdFind(loadPC);
+    return (e && e->valid) ? e->storePC : 0;
+}
+
 MrnTables::FwdEntry *
 MrnTables::fwdAllocate(Addr loadPC)
 {

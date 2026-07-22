@@ -110,6 +110,11 @@ class MrnTables
      *  none is known. Used at rename to find an in-flight producing store. */
     Addr predictProducerPC(Addr loadPC);
 
+    /** Correlator: the bound store PC for this load PC (0 if none), WITHOUT
+     *  touching LRU. For measuring the correlator's prediction against the
+     *  true producer at the LSQ forward; must not perturb replacement. */
+    Addr peekProducerPC(Addr loadPC) const;
+
   private:
     struct StoreEntry
     {
@@ -159,6 +164,8 @@ class MrnTables
     int valueAllocate();
     /** Find the correlator entry for loadPC, or nullptr on a miss. */
     FwdEntry *fwdFind(Addr loadPC);
+    /** const overload used by peekProducerPC (must not touch LRU). */
+    const FwdEntry *fwdFind(Addr loadPC) const;
     /** Allocate (LRU-evict within the set) a correlator entry for loadPC. */
     FwdEntry *fwdAllocate(Addr loadPC);
 
@@ -279,6 +286,24 @@ class MemRenamePredictor : public SimObject
             return 0;
         }
         return tables.predictProducerPC(loadPC);
+    }
+
+    /** LSQ store->load forward: score the correlator's current binding for
+     *  this load against the store it ACTUALLY forwarded from (the ground
+     *  truth). Called just before trainForward updates the binding. Measures
+     *  the producer-PC prediction in isolation from the physreg-liveness
+     *  question that aliasVerifyCorrect/aliasMispredicts also fold in. */
+    void
+    noteProducerPredict(Addr loadPC, Addr actualStorePC)
+    {
+        const Addr pred = tables.peekProducerPC(loadPC);
+        if (pred == 0) {
+            stats.producerPredictUntrained++;
+        } else if (pred == actualStorePC) {
+            stats.producerPredictCorrect++;
+        } else {
+            stats.producerPredictWrong++;
+        }
     }
 
     /** Rename: a load was forwarded via the value snapshot. */
@@ -444,6 +469,17 @@ class MemRenamePredictor : public SimObject
         statistics::Scalar aliasVerifyWaitedForProducer;
         /** loadPC->storePC correlator bindings learned from LSQ forwarding. */
         statistics::Scalar bindingsLearned;
+
+        /** Correlator producer-PC prediction scored against the true
+         *  producing store at each LSQ forward: the binding existed and
+         *  matched the store the load actually forwarded from. */
+        statistics::Scalar producerPredictCorrect;
+
+        /** ...the binding existed but named a different store PC. */
+        statistics::Scalar producerPredictWrong;
+
+        /** ...no binding existed yet (first forward seen for this load PC). */
+        statistics::Scalar producerPredictUntrained;
 
         /** Value-path forwards discarded before they could verify,
          *  indexed by MrnSquashReason. */

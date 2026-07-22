@@ -353,6 +353,41 @@ class MemRenamePredictor : public SimObject
         stats.forwardsAlias++;
     }
 
+    /** Rename: a producer-aliasing attempt was abandoned after the correlator
+     *  made a prediction (producerPredictMade) but before the load was aliased
+     *  (forwardsAlias). The four outcomes below plus forwardsAlias partition
+     *  every made prediction:
+     *    producerPredictMade == forwardsAlias
+     *        + aliasNoInflightStore + aliasStoreDataNotInt
+     *        + aliasProducerUnusable + aliasStaleRejected
+     *  @{ */
+    /** No usable in-flight store with the predicted PC was in the store
+     *  queue, so there was nothing to alias to. */
+    void
+    noteAliasNoInflightStore()
+    {
+        stats.aliasNoInflightStore++;
+    }
+    /** The located store's data source register was not integer. */
+    void
+    noteAliasStoreDataNotInt()
+    {
+        stats.aliasStoreDataNotInt++;
+    }
+    /** The producer physreg was invalid, fixed-mapping, or already dead. */
+    void
+    noteAliasProducerUnusable()
+    {
+        stats.aliasProducerUnusable++;
+    }
+    /** The producer was stale and aliasRequireCurrentProducer refused it. */
+    void
+    noteAliasStaleRejected()
+    {
+        stats.aliasStaleRejected++;
+    }
+    /** @} */
+
     /** Writeback: an aliased load verified correct. */
     void
     noteAliasCorrect()
@@ -537,6 +572,18 @@ class MemRenamePredictor : public SimObject
         /** Diagnostic: alias attempts where it did NOT match (the data arch
          *  reg was redefined between the store's rename and the load's). */
         statistics::Scalar aliasProducerStale;
+
+        /** Breakdown of made predictions that did NOT become an alias, one
+         *  counter per abandon path in tryMemRenameAlias. With forwardsAlias
+         *  these partition producerPredictMade. */
+        /** ...no usable in-flight store with the predicted PC. */
+        statistics::Scalar aliasNoInflightStore;
+        /** ...the located store's data source register was not integer. */
+        statistics::Scalar aliasStoreDataNotInt;
+        /** ...the producer physreg was invalid/fixed/dead. */
+        statistics::Scalar aliasProducerUnusable;
+        /** ...the producer was stale and the current-producer gate refused. */
+        statistics::Scalar aliasStaleRejected;
 
         /** Diagnostic: alias verify outcome bucketed by staleness --
          *  {currentWrong, currentCorrect, staleWrong, staleCorrect}. */

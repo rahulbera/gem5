@@ -86,6 +86,18 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(aliasProducerStale, statistics::units::Count::get(),
                "Alias attempts where the data arch reg was redefined between "
                "the located store's rename and the load's rename"),
+      ADD_STAT(aliasNoInflightStore, statistics::units::Count::get(),
+               "Made predictions abandoned: no usable in-flight store with "
+               "the predicted PC in the store queue"),
+      ADD_STAT(aliasStoreDataNotInt, statistics::units::Count::get(),
+               "Made predictions abandoned: the located store's data source "
+               "register was not integer"),
+      ADD_STAT(aliasProducerUnusable, statistics::units::Count::get(),
+               "Made predictions abandoned: the producer physreg was invalid, "
+               "fixed-mapping, or already dead"),
+      ADD_STAT(aliasStaleRejected, statistics::units::Count::get(),
+               "Made predictions abandoned: the producer was stale and "
+               "aliasRequireCurrentProducer refused the alias"),
       ADD_STAT(aliasOutcomeByStaleness, statistics::units::Count::get(),
                "Alias verify outcome bucketed by producer staleness")
 {

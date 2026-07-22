@@ -1262,6 +1262,7 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
 
     DynInstPtr store = iew_ptr->ldstQueue.findYoungestStoreByPC(tid, store_pc);
     if (!store || !store->isStore() || store->numSrcRegs() == 0) {
+        memRenamePred->noteAliasNoInflightStore();
         return false;
     }
 
@@ -1271,6 +1272,7 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     const int n = store->numSrcRegs();
     const RegId data_arch = store->srcRegIdx(n - 1).flatten(*isa);
     if (!data_arch.is(IntRegClass)) {
+        memRenamePred->noteAliasStoreDataNotInt();
         return false;
     }
     // Alias to the CURRENT rename-map mapping of the store's data
@@ -1285,6 +1287,7 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     PhysRegIdPtr producer = renameMap[tid]->lookup(data_arch);
     if (!producer || !producer->is(IntRegClass) ||
         producer->isFixedMapping() || producer->getRefCount() <= 0) {
+        memRenamePred->noteAliasProducerUnusable();
         return false;
     }
 
@@ -1318,6 +1321,7 @@ Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
     }
     memRenamePred->noteAliasProducerStaleness(stale);
     if (stale && memRenamePred->aliasRequireCurrentProducer()) {
+        memRenamePred->noteAliasStaleRejected();
         return false;
     }
 

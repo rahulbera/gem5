@@ -81,7 +81,8 @@ if env['CONF']['BUILD_ISA']:
 
     GTest('ghost_policy.test', 'ghost_policy.test.cc', 'ghost_policy.cc')
     GTest('mem_rename_predictor.test', 'mem_rename_predictor.test.cc',
-        'mem_rename_predictor.cc', with_tag('gem5 trace'))
+        'mem_rename_predictor.cc', 'mem_rename_valuefile.cc',
+        '../reg_class.cc', '../../sim/bufval.cc', with_tag('gem5 trace'))
     GTest('mem_rename_valuefile.test', 'mem_rename_valuefile.test.cc',
         'mem_rename_valuefile.cc', '../reg_class.cc', '../../base/debug.cc',
         '../../sim/bufval.cc')

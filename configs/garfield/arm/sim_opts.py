@@ -171,10 +171,25 @@ def add_common_args(
         "--mrn-correlation",
         type=str,
         default="lsq-forward",
-        choices=["lsq-forward", "store-set"],
+        choices=["lsq-forward", "store-set", "value-file"],
         help="Producer-binding source for producer aliasing: lsq-forward "
-        "(loadPC->storePC learned from LSQ forwarding) or store-set (stub: "
-        "no producer found).",
+        "(loadPC->storePC learned from LSQ forwarding), store-set (stub: "
+        "no producer found), or value-file (rendezvous model: a store "
+        "deposits its producer information at rename, learned by address "
+        "at execution).",
+    )
+    garfield.add_argument(
+        "--mrn-vf-no-producer-value",
+        action="store_true",
+        help="Value-file correlation: disable forwarding the producer "
+        "physreg's value when it is already ready at the load's rename "
+        "(on by default).",
+    )
+    garfield.add_argument(
+        "--mrn-vf-no-last-value",
+        action="store_true",
+        help="Value-file correlation: disable forwarding the last value "
+        "from a self-bound cell (on by default).",
     )
     garfield.add_argument(
         "--mrn-train-commit-value",
@@ -237,6 +252,8 @@ def make_mrn(args):
         predictIntLoadsOnly=not args.mrn_allow_nonint,
         aliasRequireCurrentProducer=not args.mrn_alias_allow_stale,
         trainOnRenameSnapshot=not args.mrn_train_commit_value,
+        vfForwardProducerValue=not args.mrn_vf_no_producer_value,
+        vfForwardLastValue=not args.mrn_vf_no_last_value,
     )
 
 
@@ -252,7 +269,7 @@ def apply_core_knobs(cpu, args):
 
 
 def _mrn_banner(args):
-    """MRN banner fragment naming which paths are active."""
+    """MRN banner fragment naming which paths and knobs are active."""
     if not args.use_mrn:
         return "off"
     paths = []
@@ -260,7 +277,12 @@ def _mrn_banner(args):
         paths.append("value")
     if args.mrn_alias:
         paths.append("alias")
-    return f"on ({'+'.join(paths) if paths else 'none'})"
+    return (
+        f"on ({'+'.join(paths) if paths else 'none'}) "
+        f"correlation={args.mrn_correlation} "
+        f"vfProducerValue={not args.mrn_vf_no_producer_value} "
+        f"vfLastValue={not args.mrn_vf_no_last_value}"
+    )
 
 
 def describe(args):

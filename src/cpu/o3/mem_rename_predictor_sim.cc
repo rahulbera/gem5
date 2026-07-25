@@ -12,12 +12,19 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
                        p.loadTableEntries, p.loadTableAssoc,
                        p.valueFileEntries, p.confBits, p.confThreshold,
                        p.confInc, p.confDec, p.resetConfOnMispredict}),
+      vfTables(MrnVfConfig{p.vfEntries, p.slcEntries, p.slcAssoc, p.scEntries,
+                           p.scAssoc, p.scGranularityBytes, p.confBits,
+                           p.confThreshold, p.confInc, p.confDec,
+                           p.resetConfOnMispredict}),
       _aliasRequireCurrentProducer(p.aliasRequireCurrentProducer),
       _trainOnSnapshot(p.trainOnRenameSnapshot),
       _predictIntLoadsOnly(p.predictIntLoadsOnly),
       _enableValueForwarding(p.enableValueForwarding),
       _enableProducerAliasing(p.enableProducerAliasing),
       _useStoreSet(p.mrnCorrelation == enums::store_set),
+      _useValueFile(p.mrnCorrelation == enums::value_file),
+      _vfForwardProducerValue(p.vfForwardProducerValue),
+      _vfForwardLastValue(p.vfForwardLastValue),
       stats(this)
 {}
 
@@ -99,7 +106,57 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "Made predictions abandoned: the producer was stale and "
                "aliasRequireCurrentProducer refused the alias"),
       ADD_STAT(aliasOutcomeByStaleness, statistics::units::Count::get(),
-               "Alias verify outcome bucketed by producer staleness")
+               "Alias verify outcome bucketed by producer staleness"),
+      ADD_STAT(vfPredictMade, statistics::units::Count::get(),
+               "Value-file predictions made, by forwarding mode"),
+      ADD_STAT(vfPredictCorrect, statistics::units::Count::get(),
+               "Value-file predictions that verified correct, by "
+               "forwarding mode"),
+      ADD_STAT(vfPredictWrong, statistics::units::Count::get(),
+               "Value-file predictions that verified wrong and forced a "
+               "squash, by forwarding mode"),
+      ADD_STAT(vfPredictSquashed, statistics::units::Count::get(),
+               "Value-file predictions squashed before they could verify, "
+               "by forwarding mode"),
+      ADD_STAT(vfDepositsPtr, statistics::units::Count::get(),
+               "Value-file store renames that deposited a producer "
+               "register pointer into a cell"),
+      ADD_STAT(vfDepositsWithValue, statistics::units::Count::get(),
+               "Value-file store renames whose deposit also included an "
+               "already-ready value"),
+      ADD_STAT(vfScPublishes, statistics::units::Count::get(),
+               "Value-file store address resolutions that published a "
+               "cell into the store cache"),
+      ADD_STAT(vfScPublishSuppressed, statistics::units::Count::get(),
+               "Value-file store cache publishes suppressed by a stale "
+               "reference or a program-order-younger occupant"),
+      ADD_STAT(vfScProbeHits, statistics::units::Count::get(),
+               "Value-file load address resolutions that hit the store "
+               "cache"),
+      ADD_STAT(vfScProbeMisses, statistics::units::Count::get(),
+               "Value-file load address resolutions that missed the "
+               "store cache"),
+      ADD_STAT(vfScProbeDeadChannel, statistics::units::Count::get(),
+               "Value-file store-cache hits whose cell had been "
+               "reallocated since (dead channel, treated as a miss)"),
+      ADD_STAT(vfRebinds, statistics::units::Count::get(),
+               "Value-file loads rebound to a different cell at address "
+               "resolution"),
+      ADD_STAT(vfSelfBinds, statistics::units::Count::get(),
+               "Value-file loads newly self-bound to their own cell at "
+               "address resolution"),
+      ADD_STAT(vfBelowConfSuppressed, statistics::units::Count::get(),
+               "Value-file rename-time lookups that were bound but below "
+               "the confidence threshold, so no prediction was made"),
+      ADD_STAT(vfShadowCorrect, statistics::units::Count::get(),
+               "Value-file shadow comparisons that matched the true load "
+               "value"),
+      ADD_STAT(vfShadowWrong, statistics::units::Count::get(),
+               "Value-file shadow comparisons that did not match the "
+               "true load value"),
+      ADD_STAT(vfShadowSkipped, statistics::units::Count::get(),
+               "Value-file shadow comparisons skipped because the "
+               "producer value was not available")
 {
     const int num_reasons = static_cast<int>(MrnSquashReason::Num);
 
@@ -116,6 +173,23 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
     for (int i = 0; i < num_reasons; i++) {
         predictionsSquashedValue.subname(i, mrnSquashReasonNames[i]);
         predictionsSquashedAlias.subname(i, mrnSquashReasonNames[i]);
+    }
+
+    static const char *vf_mode_names[] = {"alias", "producerValue",
+                                          "lastValue"};
+    vfPredictMade.init(MemRenamePredictor::VfModeCount)
+        .flags(statistics::total);
+    vfPredictCorrect.init(MemRenamePredictor::VfModeCount)
+        .flags(statistics::total);
+    vfPredictWrong.init(MemRenamePredictor::VfModeCount)
+        .flags(statistics::total);
+    vfPredictSquashed.init(MemRenamePredictor::VfModeCount)
+        .flags(statistics::total);
+    for (int i = 0; i < MemRenamePredictor::VfModeCount; i++) {
+        vfPredictMade.subname(i, vf_mode_names[i]);
+        vfPredictCorrect.subname(i, vf_mode_names[i]);
+        vfPredictWrong.subname(i, vf_mode_names[i]);
+        vfPredictSquashed.subname(i, vf_mode_names[i]);
     }
 }
 

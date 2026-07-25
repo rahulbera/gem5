@@ -6,6 +6,7 @@
 
 #include "base/statistics.hh"
 #include "base/types.hh"
+#include "cpu/o3/mem_rename_valuefile.hh"
 #include "cpu/o3/mrn_squash_reason.hh"
 #include "sim/sim_object.hh"
 
@@ -486,8 +487,176 @@ class MemRenamePredictor : public SimObject
         return _enableProducerAliasing;
     }
 
+    /** Whether the value-file rendezvous correlation is active
+     *  (mrnCorrelation == value_file). */
+    bool
+    valueFileEnabled() const
+    {
+        return _useValueFile;
+    }
+
+    /** Value file: forward the producer physreg's value when it is
+     *  already ready at the load's rename. */
+    bool
+    vfForwardProducerValue() const
+    {
+        return _vfForwardProducerValue;
+    }
+
+    /** Value file: forward the last value from a self-bound cell. */
+    bool
+    vfForwardLastValue() const
+    {
+        return _vfForwardLastValue;
+    }
+
+    /** Per-mode index for the vfPredict* stat vectors. */
+    enum VfMode
+    {
+        VfModeAlias = 0,
+        VfModeProducerValue,
+        VfModeLastValue,
+        VfModeCount
+    };
+
+    /** Value file (rename): a store deposits its producer physreg (and,
+     *  when readyValue is non-null, the already-ready value) into its
+     *  named cell. Counts the deposit and whether a value rode along. */
+    MrnVfRef
+    vfStoreRename(Addr pc, PhysRegIdPtr reg, InstSeqNum sn, const RegVal *rv)
+    {
+        stats.vfDepositsPtr++;
+        if (rv) {
+            stats.vfDepositsWithValue++;
+        }
+        return vfTables.storeRename(pc, reg, sn, rv);
+    }
+
+    /** Value file (rename): look up a load PC's bound cell. Callers should
+     *  invoke vfNoteBelowConf() when the returned cell is bound but not
+     *  yet confident, so a prediction was suppressed. */
+    MrnVfCellRead
+    vfLoadRename(Addr pc)
+    {
+        return vfTables.loadRename(pc);
+    }
+
+    /** Value file (address resolution): a store publishes its cell into
+     *  the store cache. Counts the publish, or its suppression (stale
+     *  reference / a program-order-younger occupant already holds the
+     *  address). */
+    void
+    vfStoreAddrResolved(const MrnVfRef &ref, Addr ea, InstSeqNum sn)
+    {
+        if (vfTables.storeAddrResolved(ref, ea, sn)) {
+            stats.vfScPublishes++;
+        } else {
+            stats.vfScPublishSuppressed++;
+        }
+    }
+
+    /** Value file (address resolution): a load probes the store cache and
+     *  rebinds or self-binds per the rendezvous rules. Counts the probe
+     *  outcome (hit/miss/dead-channel) and any rebind/self-bind. */
+    void
+    vfLoadAddrResolved(Addr pc, Addr ea)
+    {
+        const MrnVfProbeResult result = vfTables.loadAddrResolved(pc, ea);
+        if (result.scHitDeadChannel) {
+            stats.vfScProbeDeadChannel++;
+        }
+        switch (result.outcome) {
+            case MrnVfProbeResult::SameBinding:
+                stats.vfScProbeHits++;
+                break;
+            case MrnVfProbeResult::Rebound:
+                stats.vfScProbeHits++;
+                stats.vfRebinds++;
+                break;
+            case MrnVfProbeResult::SelfBound:
+                stats.vfScProbeMisses++;
+                stats.vfSelfBinds++;
+                break;
+            case MrnVfProbeResult::AlreadySelfBound:
+                stats.vfScProbeMisses++;
+                break;
+        }
+    }
+
+    /** Value file (writeback): update a self-bound cell with the load's
+     *  resolved value (last-value forwarding). */
+    void
+    vfLoadDataResolved(Addr pc, RegVal v)
+    {
+        vfTables.loadDataResolved(pc, v);
+    }
+
+    /** Value file (writeback): train the bound cell's confidence counter
+     *  against the verified outcome. */
+    void
+    vfTrainVerify(Addr pc, const MrnVfRef &ref, bool correct)
+    {
+        vfTables.trainVerify(pc, ref, correct);
+    }
+
+    /** ACCURACY: a value-file prediction was made for a given mode
+     *  (VfMode). */
+    void
+    vfNotePredictMade(int mode)
+    {
+        stats.vfPredictMade[mode]++;
+    }
+
+    /** ACCURACY: resolve a made value-file prediction at verification. */
+    void
+    vfNotePredictOutcome(int mode, bool correct)
+    {
+        if (correct) {
+            stats.vfPredictCorrect[mode]++;
+        } else {
+            stats.vfPredictWrong[mode]++;
+        }
+    }
+
+    /** A made value-file prediction whose load was squashed before it
+     *  could be verified. */
+    void
+    vfNotePredictSquashed(int mode)
+    {
+        stats.vfPredictSquashed[mode]++;
+    }
+
+    /** Value file: a rename-time lookup was bound but below the
+     *  confidence threshold, so no prediction was made. */
+    void
+    vfNoteBelowConf()
+    {
+        stats.vfBelowConfSuppressed++;
+    }
+
+    /** Value file: a shadow (non-forwarding) comparison against the true
+     *  load value, used to measure would-be accuracy without forwarding. */
+    void
+    vfNoteShadow(bool correct)
+    {
+        if (correct) {
+            stats.vfShadowCorrect++;
+        } else {
+            stats.vfShadowWrong++;
+        }
+    }
+
+    /** Value file: a shadow comparison was skipped because the producer
+     *  value was not available. */
+    void
+    vfNoteShadowSkipped()
+    {
+        stats.vfShadowSkipped++;
+    }
+
   private:
     MrnTables tables;
+    MrnValueFileTables vfTables;
     const bool _aliasRequireCurrentProducer;
 
     const bool _trainOnSnapshot;
@@ -499,6 +668,13 @@ class MemRenamePredictor : public SimObject
     const bool _enableProducerAliasing;
     /** mrnCorrelation == store_set (stub: predictProducerPC returns 0). */
     const bool _useStoreSet;
+    /** mrnCorrelation == value_file (rendezvous model). */
+    const bool _useValueFile;
+    /** Value file: forward the producer physreg's value when it is
+     *  already ready at the load's rename. */
+    const bool _vfForwardProducerValue;
+    /** Value file: forward the last value from a self-bound cell. */
+    const bool _vfForwardLastValue;
 
     /** Training statistics (Garfield MRN). */
     struct MemRenameStats : public statistics::Group
@@ -588,6 +764,57 @@ class MemRenamePredictor : public SimObject
         /** Diagnostic: alias verify outcome bucketed by staleness --
          *  {currentWrong, currentCorrect, staleWrong, staleCorrect}. */
         statistics::Vector aliasOutcomeByStaleness;
+
+        /** Value-file predictions made, by forwarding mode (VfMode). */
+        statistics::Vector vfPredictMade;
+        /** ...that verified correct, by forwarding mode. */
+        statistics::Vector vfPredictCorrect;
+        /** ...that verified wrong and forced a squash, by forwarding
+         *  mode. */
+        statistics::Vector vfPredictWrong;
+        /** ...whose load was squashed before it could verify, by
+         *  forwarding mode. */
+        statistics::Vector vfPredictSquashed;
+
+        /** Value file: store renames that deposited a producer register
+         *  pointer into a cell. */
+        statistics::Scalar vfDepositsPtr;
+        /** Value file: store renames whose deposit also included an
+         *  already-ready value. */
+        statistics::Scalar vfDepositsWithValue;
+        /** Value file: store address resolutions that published a cell
+         *  into the store cache. */
+        statistics::Scalar vfScPublishes;
+        /** Value file: store cache publishes suppressed by a stale
+         *  reference or a program-order-younger occupant. */
+        statistics::Scalar vfScPublishSuppressed;
+        /** Value file: load address resolutions that hit the store
+         *  cache. */
+        statistics::Scalar vfScProbeHits;
+        /** Value file: load address resolutions that missed the store
+         *  cache. */
+        statistics::Scalar vfScProbeMisses;
+        /** Value file: store-cache hits whose cell had been reallocated
+         *  since (dead channel, treated as a miss). */
+        statistics::Scalar vfScProbeDeadChannel;
+        /** Value file: loads rebound to a different cell at address
+         *  resolution. */
+        statistics::Scalar vfRebinds;
+        /** Value file: loads newly self-bound to their own cell at
+         *  address resolution. */
+        statistics::Scalar vfSelfBinds;
+        /** Value file: rename-time lookups that were bound but below the
+         *  confidence threshold, so no prediction was made. */
+        statistics::Scalar vfBelowConfSuppressed;
+        /** Value file: shadow comparisons that matched the true load
+         *  value. */
+        statistics::Scalar vfShadowCorrect;
+        /** Value file: shadow comparisons that did not match the true
+         *  load value. */
+        statistics::Scalar vfShadowWrong;
+        /** Value file: shadow comparisons skipped because the producer
+         *  value was not available. */
+        statistics::Scalar vfShadowSkipped;
 
     } stats;
 };

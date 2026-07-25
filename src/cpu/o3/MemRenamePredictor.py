@@ -6,8 +6,11 @@ from m5.SimObject import SimObject
 class MrnCorrelation(Enum):
     # How producer aliasing finds a load's producing store. lsq_forward
     # learns loadPC->storePC bindings from the LSQ store->load forward event;
-    # store_set is a stub (treated as "no producer found").
-    vals = ["lsq_forward", "store_set"]
+    # store_set is a stub (treated as "no producer found"); value_file is
+    # the rendezvous model: a store deposits its producer information into
+    # a named cell at its own rename, and the cell is learned by address at
+    # the store's execution (address resolution).
+    vals = ["lsq_forward", "store_set", "value_file"]
 
 
 class MemRenamePredictor(SimObject):
@@ -88,5 +91,23 @@ class MemRenamePredictor(SimObject):
         "lsq_forward",
         "Producer-binding source for producer aliasing: lsq_forward "
         "(loadPC->storePC learned from LSQ forwarding) | store_set (stub, "
-        "treated as no producer found).",
+        "treated as no producer found) | value_file (rendezvous model, "
+        "deposits at rename, learned by address at execution).",
+    )
+
+    vfEntries = Param.Unsigned(1024, "Value-file rendezvous cells")
+    slcEntries = Param.Unsigned(4096, "Store/load cache entries (PC-indexed)")
+    slcAssoc = Param.Unsigned(4, "Store/load cache associativity")
+    scEntries = Param.Unsigned(4096, "Store cache entries (address-indexed)")
+    scAssoc = Param.Unsigned(4, "Store cache associativity")
+    scGranularityBytes = Param.Unsigned(8, "Store cache line granularity")
+    vfForwardProducerValue = Param.Bool(
+        True,
+        "Forward the producer physreg's value when it is already ready "
+        "at the load's rename (value_file correlation only)",
+    )
+    vfForwardLastValue = Param.Bool(
+        True,
+        "Forward the last value from a self-bound cell "
+        "(value_file correlation only)",
     )

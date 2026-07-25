@@ -108,6 +108,32 @@ TEST(MrnValueFileTables, RebindResetsConfidence)
     EXPECT_EQ(r.ptr, fakeReg(9)); // now the new channel
 }
 
+TEST(MrnValueFileTables, RebindClearsSelfBound)
+{
+    MrnValueFileTables t(testConfig());
+
+    // The load self-binds (nothing published yet) and writes back a
+    // last-value.
+    auto probe1 = t.loadAddrResolved(0x200, 0x2000);
+    ASSERT_EQ(probe1.outcome, MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 111));
+
+    // A store now publishes that same address; the load's next probe
+    // must rebind onto the store's channel, clearing selfBound.
+    MrnVfRef refStore = t.storeRename(0x100, fakeReg(7), 10, nullptr);
+    ASSERT_TRUE(t.storeAddrResolved(refStore, 0x2000, 10));
+    auto probe2 = t.loadAddrResolved(0x200, 0x2000);
+    EXPECT_EQ(probe2.outcome, MrnVfProbeResult::Rebound);
+
+    // No longer self-bound: a late writeback value must not be accepted.
+    EXPECT_FALSE(t.loadDataResolved(0x200, 222));
+
+    // A different, freshly self-bound load elsewhere is unaffected.
+    auto probe3 = t.loadAddrResolved(0x300, 0x3000);
+    ASSERT_EQ(probe3.outcome, MrnVfProbeResult::SelfBound);
+    EXPECT_TRUE(t.loadDataResolved(0x300, 333));
+}
+
 TEST(MrnValueFileTables, SelfBindLastValue)
 {
     MrnValueFileTables t(testConfig());
@@ -131,14 +157,90 @@ TEST(MrnValueFileTables, SelfBindLastValue)
 
 TEST(MrnValueFileTables, GenMismatchAfterReallocation)
 {
-    MrnValueFileTables t(testConfig()); // vfEntries = 4
+    // Generous SLC capacity (assoc 4, vs. the default 2) so the load's
+    // SLC entry can never be capacity-evicted by the thief stores below;
+    // vfEntries stays at 4 so stealing all four VF cells is still what
+    // forces the mismatch this test targets: loadRename must hit the
+    // `valueFile[e->vfIdx].gen != e->gen` check (mem_rename_valuefile.cc,
+    // loadRename), not a plain SLC miss.
+    MrnVfConfig cfg = testConfig();
+    cfg.slcEntries = 16;
+    cfg.slcAssoc = 4;
+    MrnValueFileTables t(cfg);
     bindAndTrain(t, 0x100, 0x200, 0x1000, fakeReg(7), 10);
-    // Exhaust the value file: four more stores steal all four cells.
+    ASSERT_TRUE(t.loadRename(0x200).bound);
+
+    // Four stores at PCs outside the load's SLC set steal all four VF
+    // cells (global LRU) without ever touching the load's SLC entry, so
+    // it stays present throughout -- only its cell's generation moves.
+    const Addr thief_pcs[] = {0x501, 0x502, 0x503, 0x505};
+    for (int i = 0; i < 3; i++) {
+        t.storeRename(thief_pcs[i], fakeReg(20 + i), 100 + i, nullptr);
+        // The load's own cell is not yet the global LRU-min victim: it
+        // survives each of the first three thefts.
+        ASSERT_TRUE(t.loadRename(0x200).bound);
+    }
+    t.storeRename(thief_pcs[3], fakeReg(23), 103, nullptr);
+    // The fourth theft finally reallocates the load's own cell. Its SLC
+    // entry is still present (confirmed above), so this miss is a
+    // genuine gen mismatch, not an SLC miss.
+    EXPECT_FALSE(t.loadRename(0x200).bound);
+}
+
+TEST(MrnValueFileTables, StoreRenameRepairsStolenCell)
+{
+    MrnValueFileTables t(testConfig()); // vfEntries = 4
+    const Addr store_a = 0x100;
+    MrnVfRef refA1 = t.storeRename(store_a, fakeReg(7), 10, nullptr);
+    ASSERT_TRUE(refA1.valid());
+
+    // Steal all four VF cells with other stores at PCs outside A's SLC
+    // set, so A's SLC entry survives and still points at refA1.idx when
+    // A deposits again below.
+    const Addr thief_pcs[] = {0x501, 0x502, 0x503, 0x505};
+    for (int i = 0; i < 4; i++) {
+        t.storeRename(thief_pcs[i], fakeReg(20 + i), 100 + i, nullptr);
+    }
+
+    // A deposits again: its SLC entry still points at cell refA1.idx,
+    // but that cell's generation has moved on. This must hit the repair
+    // branch in storeRename (mem_rename_valuefile.cc) -- a fresh
+    // vfAllocate rather than depositing into someone else's live cell.
+    MrnVfRef refA2 = t.storeRename(store_a, fakeReg(77), 20, nullptr);
+    ASSERT_TRUE(refA2.valid());
+    EXPECT_FALSE(refA2 == refA1); // a genuinely different, fresh cell
+
+    // A subsequent bind+consume must see the NEW deposit's pointer, not
+    // whatever the repaired-away cell used to hold.
+    ASSERT_TRUE(t.storeAddrResolved(refA2, 0x1000, 20));
+    auto probe = t.loadAddrResolved(0x200, 0x1000);
+    EXPECT_EQ(probe.outcome, MrnVfProbeResult::Rebound);
+    auto r = t.loadRename(0x200);
+    ASSERT_TRUE(r.bound);
+    EXPECT_TRUE(r.ptrValid);
+    EXPECT_EQ(r.ptr, fakeReg(77));
+    EXPECT_EQ(r.ptrSeq, 20u);
+    EXPECT_TRUE(r.ref == refA2);
+}
+
+TEST(MrnValueFileTables, ProbeDeadChannelSelfBinds)
+{
+    MrnValueFileTables t(testConfig()); // vfEntries = 4
+    MrnVfRef refA = t.storeRename(0x100, fakeReg(7), 10, nullptr);
+    ASSERT_TRUE(t.storeAddrResolved(refA, 0x1000, 10));
+
+    // Steal every VF cell, including A's, with other stores: the store
+    // cache entry published above now points at a reallocated cell.
     for (int i = 0; i < 4; i++) {
         t.storeRename(0x300 + 8 * i, fakeReg(20 + i), 100 + i, nullptr);
     }
-    auto r = t.loadRename(0x200);
-    EXPECT_FALSE(r.bound); // the load's cell was reallocated: dead channel
+
+    // A load probing that address hits the SC entry but finds its cell's
+    // generation has moved on: dead channel, so it falls through to the
+    // self-bind path instead of rebinding onto a stale channel.
+    auto probe = t.loadAddrResolved(0x200, 0x1000);
+    EXPECT_TRUE(probe.scHitDeadChannel);
+    EXPECT_EQ(probe.outcome, MrnVfProbeResult::SelfBound);
 }
 
 TEST(MrnValueFileTables, ScProgramOrderGuard)

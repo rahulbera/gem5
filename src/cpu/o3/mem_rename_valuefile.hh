@@ -202,7 +202,8 @@ class MrnValueFileTables
     unsigned
     confMax() const
     {
-        return (1u << confBits) - 1;
+        const unsigned capped = confBits > 31 ? 31 : confBits;
+        return (1u << capped) - 1;
     }
 
     const unsigned slcSets, slcAssoc, scSets, scAssoc;

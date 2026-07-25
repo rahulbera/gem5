@@ -22,8 +22,10 @@ numSets(unsigned entries, unsigned assoc)
     return atLeastOne(entries / atLeastOne(assoc));
 }
 
-/** log2 of a power-of-two granularity (falls back to 0, i.e. byte
- *  granularity, for a non-power-of-two or zero input). */
+/** floor(log2(bytes)): the largest shift such that (1u << shift) <=
+ *  bytes. Inputs of 0 or 1 both floor to 0 (byte granularity); a
+ *  non-power-of-two input floors down to its next lower power of two
+ *  rather than falling back to 0 outright. */
 inline unsigned
 log2OfGranularity(unsigned bytes)
 {

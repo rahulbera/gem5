@@ -88,21 +88,40 @@ load's rename (~99.5% lost).
 it is value delivery. (Superseded: earlier notes here proposed a confidence
 counter; the isolation stat shows the correlator does not need it.)
 
-## 1c. Fix aliasing value delivery (NEXT — design in progress)
+## 1c. Fix aliasing value delivery (DONE — value-file rendezvous)
 
 **Problem.** A correctly-named producing store's value does not reach the load.
 The alias points the load's destination at `renameMap.lookup(data_arch)` — the
 CURRENT mapping of the store's data arch reg at the LOAD's rename — rather than
 the physreg the producing store instance actually writes. For a changing
 recurrence that arch reg is redefined between the store and the load, so the
-lookup is stale.
+lookup is stale. Root cause proven structural: a store enters the SQ at
+dispatch (`renameToIEWDelay`=2 cycles after its rename), so the
+same-iteration producer is NEVER visible to `findYoungestStoreByPC` at the
+load's rename — the located store is always a prior iteration's instance.
 
-**Direction (to be designed).** Deliver the value from the *specific producing
-store instance* the correlator named, not from an arch-reg lookup: e.g. alias
-to the store's own captured data physreg tracked by seqNum, and resolve at
-MAX(load-ready, producer-ready). Timing constraint to solve: the same-iteration
-store may not be in the SQ at the load's rename. See the current-value-delivery
-rundown and the forthcoming design.
+**Resolution (implemented 2026-07-25, commits `20718d20ff..428f07d488`).**
+Replaced find-the-store with a rendezvous, after Tyson & Austin memory
+renaming (MICRO-30 1997; tables per Reinman et al., ICS 1999 §2.3): the
+store DEPOSITS its data physreg (+ value if ready) into a per-static-store
+value-file cell at its own rename (in-order ⇒ always the correct instance);
+the load READS the cell at its rename. Address-indexed store cache learns
+loadPC→cell bindings at address resolution (program-order write guard);
+loads rebind on probe mismatch, self-bind + last-value on miss; generation
+tags kill dangling references to reallocated cells; confidence in the
+load's SLC entry, shadow-trained below threshold. Select with
+`mrnCorrelation=value_file`. Dependence distance 1 is the design point.
+
+**Measured.** `mrnrec` (changing recurrence, the case 1c is about): IPC
+0.666 → 1.496 (+125%), one alias per iteration (2.0M), zero mispredicts —
+the old alias path managed 1 (one) alias total. `mrncomm`: vf_full matches
+the old path (2.488). gcc 721.2.0 (10M/50M): alias-only +0.66% IPC with
+44,831 aliases @95.1% (old path: 1,702 @89.5%); full model (+ producer-value
++ last-value modes) +9.35% IPC — decomposes mostly to 3.6M last-value
+forwards @95.0%; per-mode made = correct+wrong+squashed identities exact.
+Spec: `docs/superpowers/specs/2026-07-25-mrn-valuefile-rendezvous-design.md`.
+Next: 190-checkpoint sweep; then fold the legacy value path into the model
+and delete it plus the `lsq_forward` correlator.
 
 ---
 

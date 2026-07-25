@@ -58,6 +58,7 @@
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/lsq_unit.hh"
+#include "cpu/o3/mem_rename_valuefile.hh"
 #include "cpu/op_class.hh"
 #include "cpu/reg_class.hh"
 #include "cpu/static_inst.hh"
@@ -209,6 +210,9 @@ class DynInst : public ExecContext, public RefCounted
         MrnProducerResolved,  /// Garfield: the producer-PC prediction has been
                               /// accounted (correct/wrong at writeback, or
                               /// squashed); prevents double-counting
+        MrnVfEligible, /// Garfield value-file rendezvous: this load passed
+                       /// the participation guards at rename (single
+                       /// integer destination)
         MaxFlags
     };
 
@@ -543,6 +547,23 @@ class DynInst : public ExecContext, public RefCounted
         MrnValue,
         MrnAlias
     };
+
+    /** Garfield value-file rendezvous: which consumption or shadow
+     *  (non-consuming, confidence-training) mode this instruction took.
+     *  NONE = no value-file action; ALIAS/PRODUCER_VALUE/LAST_VALUE are the
+     *  three consumed modes (design doc §5); SHADOW_VALUE/SHADOW_PTR are
+     *  below-confidence snapshots kept only to train confidence upward
+     *  (design doc §5, "Shadow verification"). */
+    enum MrnVfMode : uint8_t
+    {
+        MrnVfNone = 0,
+        MrnVfAlias,
+        MrnVfProducerValue,
+        MrnVfLastValue,
+        MrnVfShadowValue,
+        MrnVfShadowPtr
+    };
+
     MrnPath
     mrnPath() const
     {
@@ -583,6 +604,66 @@ class DynInst : public ExecContext, public RefCounted
     setMrnProducerSeq(InstSeqNum sn)
     {
         _mrnProducerSeq = sn;
+    }
+
+    /** Garfield value-file rendezvous: the value-file cell this store
+     *  deposited into at its own rename, or this load is bound to by its
+     *  PC (invalid, {-1, 0}, when the model made no binding). */
+    MrnVfRef
+    mrnVfRef() const
+    {
+        return MrnVfRef{_mrnVfIdx, _mrnVfGen};
+    }
+    void
+    setMrnVfRef(const MrnVfRef &r)
+    {
+        _mrnVfIdx = r.idx;
+        _mrnVfGen = r.gen;
+    }
+
+    /** Garfield value-file rendezvous: which mode (MrnVfMode) this
+     *  instruction's value-file interaction took. */
+    uint8_t
+    mrnVfMode() const
+    {
+        return _mrnVfMode;
+    }
+    void
+    setMrnVfMode(uint8_t m)
+    {
+        _mrnVfMode = m;
+    }
+
+    /** Garfield value-file rendezvous: this load passed the participation
+     *  guards at rename (single integer destination) and is eligible for
+     *  value-file lookup and confidence training, independent of whether a
+     *  prediction was actually consumed. */
+    bool
+    mrnVfEligible() const
+    {
+        return instFlags[MrnVfEligible];
+    }
+    void
+    setMrnVfEligible()
+    {
+        instFlags[MrnVfEligible] = true;
+    }
+
+    /** Garfield value-file rendezvous: the snapshotted value for a
+     *  below-confidence shadow prediction (MrnVfShadowValue). Writeback
+     *  compares this against the real value purely to train confidence;
+     *  a shadow prediction is never consumed, so the comparison never
+     *  squashes. Consumed value predictions use the existing
+     *  mrnPredVal()/setMrnPredVal() instead. */
+    RegVal
+    mrnVfShadowVal() const
+    {
+        return _mrnVfShadowVal;
+    }
+    void
+    setMrnVfShadowVal(RegVal v)
+    {
+        _mrnVfShadowVal = v;
     }
 
     ////////////////////////////////////////////
@@ -1224,7 +1305,13 @@ class DynInst : public ExecContext, public RefCounted
     MrnPath _mrnPath = MrnNone;
 
     /** Garfield MRN aliasing: the in-flight producer physreg this load
-     * aliases. */
+     * aliases. Also reused (dual-purpose) by the value-file rendezvous
+     * model to carry a below-confidence pointer prediction
+     * (MrnVfShadowPtr, see _mrnVfMode): in that case _mrnPath is left at
+     * MrnNone, so renameDestRegs' destination surgery -- keyed on
+     * mrnAliased(), i.e. _mrnPath == MrnAlias -- does not fire and the
+     * unconsumed pointer is inert; the LSQ reads it back at writeback
+     * purely to train confidence, never to enforce an alias. */
     PhysRegIdPtr _mrnAliasProducer = nullptr;
 
     /** Garfield MRN aliasing: producing store's sequence number. */
@@ -1232,6 +1319,22 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield: correlator-predicted producing store PC (0 if none). */
     Addr _mrnPredStorePC = 0;
+
+    /** Garfield value-file rendezvous: the value-file cell this store
+     *  deposited into, or this load is bound to, at rename (-1 = no
+     *  binding). See mrnVfRef(). */
+    int _mrnVfIdx = -1;
+    uint64_t _mrnVfGen = 0;
+
+    /** Garfield value-file rendezvous: which mode (MrnVfMode) this
+     *  instruction's value-file interaction took; MrnVfNone if the model
+     *  made no binding for it. */
+    uint8_t _mrnVfMode = MrnVfNone;
+
+    /** Garfield value-file rendezvous: snapshotted value for a
+     *  below-confidence shadow prediction (MrnVfShadowValue). See
+     *  mrnVfShadowVal(). */
+    RegVal _mrnVfShadowVal = 0;
 
   public:
     // Value -1 indicates that particular phase

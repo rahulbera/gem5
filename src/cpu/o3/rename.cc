@@ -752,9 +752,133 @@ Rename::renameInsts(ThreadID tid)
         // its own confidence (predict), producer aliasing on its own trigger
         // (a correlator binding, inside tryMemRenameAlias). Aliasing takes
         // priority when both apply.
+        //
+        // When the value-file rendezvous model is selected
+        // (mrnCorrelation == value_file), it replaces both of the above for
+        // this instruction: a store deposits a producer binding into its
+        // PC's cell at its own rename; a load looks its PC's cell up and
+        // resolves alias vs. value-forward vs. shadow-train, also at its
+        // own rename (design doc §4). The old correlator-driven alias path
+        // (tryMemRenameAlias) never runs in this mode. The old
+        // value-snapshot path (predict/peek) still runs for an eligible
+        // load only when the model made no binding for it at all, so the
+        // two sources never both write a prediction for the same load
+        // (single-writer rule, design doc §4).
         MrnPrediction mrnPred{false, 0};
         bool mrnAliased = false;
-        if (memRenamePred && inst->isLoad() && inst->numDestRegs() > 0) {
+        bool vf_alias = false;
+        bool vf_value_pending = false;
+        RegVal vf_value = 0;
+        uint8_t vf_value_mode = DynInst::MrnVfNone;
+        if (memRenamePred && memRenamePred->valueFileEnabled()) {
+            gem5::ThreadContext *tc = inst->tcBase();
+            auto *isa = tc->getIsaPtr();
+
+            // Deposit at store rename: a simple integer-data store
+            // deposits its current producer physreg (and, if already
+            // ready, the value) into its PC's value-file cell.
+            if (inst->isStore() && !inst->isAtomic() &&
+                inst->numSrcRegs() > 0) {
+                const int n = inst->numSrcRegs();
+                const RegId data_arch = inst->srcRegIdx(n - 1).flatten(*isa);
+                if (data_arch.is(IntRegClass)) {
+                    PhysRegIdPtr data_reg = inst->renamedSrcIdx(n - 1);
+                    RegVal ready_val = 0;
+                    const RegVal *rv = nullptr;
+                    if (scoreboard->getReg(data_reg)) {
+                        ready_val = cpu->getReg(data_reg, inst->threadNumber);
+                        rv = &ready_val;
+                    }
+                    inst->setMrnVfRef(memRenamePred->vfStoreRename(
+                        inst->pcState().instAddr(), data_reg, inst->seqNum,
+                        rv));
+                }
+            }
+
+            // Lookup at load rename: a simple single-integer-dest load
+            // looks its PC's cell up and, in the priority order of design
+            // doc §5, consumes it as an alias, a producer-value forward,
+            // or a last-value forward; below confidence it only snapshots
+            // for shadow (non-consuming) training.
+            if (inst->isLoad() && inst->numDestRegs() == 1) {
+                const RegId load_dest_arch =
+                    inst->destRegIdx(0).flatten(*isa);
+                if (load_dest_arch.is(IntRegClass)) {
+                    inst->setMrnVfEligible();
+                    const Addr load_pc = inst->pcState().instAddr();
+                    MrnVfCellRead cr = memRenamePred->vfLoadRename(load_pc);
+                    if (cr.bound) {
+                        inst->setMrnVfRef(cr.ref);
+                        const bool ptr_usable = cr.ptrValid && cr.ptr &&
+                            cr.ptr->is(IntRegClass) &&
+                            !cr.ptr->isFixedMapping() &&
+                            cr.ptr->getRefCount() > 0;
+                        if (cr.confident) {
+                            if (ptr_usable && !scoreboard->getReg(cr.ptr) &&
+                                memRenamePred->aliasingEnabled()) {
+                                inst->setMrnAliasProducer(cr.ptr);
+                                inst->setMrnProducerSeq(cr.ptrSeq);
+                                inst->setMrnPath(DynInst::MrnAlias);
+                                inst->setMrnVfMode(DynInst::MrnVfAlias);
+                                memRenamePred->vfNotePredictMade(
+                                    MemRenamePredictor::VfModeAlias);
+                                vf_alias = true;
+                            } else if (ptr_usable &&
+                                       scoreboard->getReg(cr.ptr) &&
+                                       memRenamePred
+                                           ->vfForwardProducerValue()) {
+                                vf_value = cpu->getReg(cr.ptr,
+                                                       inst->threadNumber);
+                                vf_value_pending = true;
+                                vf_value_mode = DynInst::MrnVfProducerValue;
+                            } else if (!cr.ptrValid && cr.valueValid &&
+                                       memRenamePred->vfForwardLastValue()) {
+                                vf_value = cr.value;
+                                vf_value_pending = true;
+                                vf_value_mode = DynInst::MrnVfLastValue;
+                            }
+                        } else {
+                            // Below threshold: snapshot what would have
+                            // been predicted so writeback can train
+                            // confidence without consuming.
+                            if (cr.ptrValid && cr.ptr &&
+                                scoreboard->getReg(cr.ptr)) {
+                                inst->setMrnVfShadowVal(cpu->getReg(
+                                    cr.ptr, inst->threadNumber));
+                                inst->setMrnVfMode(
+                                    DynInst::MrnVfShadowValue);
+                            } else if (cr.ptrValid && cr.ptr) {
+                                // Pointer only; not aliased -- carried in
+                                // the shared _mrnAliasProducer field (see
+                                // its comment in dyn_inst.hh).
+                                inst->setMrnAliasProducer(cr.ptr);
+                                inst->setMrnVfMode(DynInst::MrnVfShadowPtr);
+                            } else if (cr.valueValid) {
+                                inst->setMrnVfShadowVal(cr.value);
+                                inst->setMrnVfMode(
+                                    DynInst::MrnVfShadowValue);
+                            }
+                            memRenamePred->vfNoteBelowConf();
+                        }
+                    }
+                    // Single-writer rule: fall through to the old
+                    // value-snapshot path only when the model made no
+                    // binding at all for this load (never when it
+                    // aliased -- vf_alias implies cr.bound already, spelled
+                    // out here too so the invariant is not implicit).
+                    if (!cr.bound && !vf_alias &&
+                        memRenamePred->valueForwardingEnabled()) {
+                        mrnPred = memRenamePred->predict(load_pc);
+                        const MrnPrediction snap =
+                            memRenamePred->peek(load_pc);
+                        if (snap.valid) {
+                            inst->setMrnSnap(snap.value);
+                        }
+                    }
+                }
+            }
+        } else if (memRenamePred && inst->isLoad() &&
+                   inst->numDestRegs() > 0) {
             const Addr load_pc = inst->pcState().instAddr();
             // Value path: confidence + the rename-time training snapshot.
             if (memRenamePred->valueForwardingEnabled()) {
@@ -813,13 +937,45 @@ Rename::renameInsts(ThreadID tid)
                     "before relaxing it.",
                     (int)dest->classValue(), inst->pcState());
             }
-        } else if (mrnAliased) {
+        } else if (mrnAliased || vf_alias) {
             // Producer aliasing: renameDestRegs pointed the load's destination
             // at the in-flight producer's physreg. Mark it memory-renamed for
-            // the writeback verify (vs. the producer's value).
+            // the writeback verify (vs. the producer's value). Fires
+            // identically whether the alias came from the correlator path
+            // (mrnAliased) or the value-file rendezvous decision (vf_alias).
             inst->setMrned();
             memRenamePred->noteForwarded();
             memRenamePred->noteForwardAlias();
+        }
+
+        // Garfield value-file rendezvous: consume a producer-value or
+        // last-value binding decided above by forwarding it into the
+        // renamed destination, mirroring the old value path's forward.
+        // Restricted to integer, non-fixed-mapping destinations for the
+        // same reason as the old path (vfLoadRename's caller already
+        // required an integer destination at lookup, so this is a repeat of
+        // the fixed-mapping guard only).
+        if (vf_value_pending) {
+            PhysRegIdPtr dest = inst->renamedDestIdx(0);
+            if (dest->is(IntRegClass) && !dest->isFixedMapping()) {
+                cpu->setReg(dest, vf_value, inst->threadNumber);
+                scoreboard->setReg(dest);
+                inst->setMrned();
+                inst->setMrnPath(DynInst::MrnValue);
+                inst->setMrnPredVal(vf_value);
+                inst->setMrnVfMode(vf_value_mode);
+                memRenamePred->noteForwarded();
+                memRenamePred->noteForwardValue();
+                memRenamePred->vfNotePredictMade(
+                    vf_value_mode == DynInst::MrnVfProducerValue
+                        ? MemRenamePredictor::VfModeProducerValue
+                        : MemRenamePredictor::VfModeLastValue);
+                DPRINTF(MRN,
+                        "[tid:%i] [sn:%llu] MRN value-file forward PC %s "
+                        "value=%#x to renamed dest\n",
+                        inst->threadNumber, inst->seqNum, inst->pcState(),
+                        vf_value);
+            }
         }
 
         if (inst->isAtomic() || inst->isStore()) {

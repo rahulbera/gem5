@@ -69,6 +69,7 @@ if env['CONF']['BUILD_ISA']:
     Source('mem_dep_unit.cc')
     Source('mem_rename_predictor.cc')
     Source('mem_rename_predictor_sim.cc')
+    Source('mem_rename_valuefile.cc')
     Source('regfile.cc')
     Source('rename.cc')
     Source('rename_map.cc')
@@ -81,6 +82,9 @@ if env['CONF']['BUILD_ISA']:
     GTest('ghost_policy.test', 'ghost_policy.test.cc', 'ghost_policy.cc')
     GTest('mem_rename_predictor.test', 'mem_rename_predictor.test.cc',
         'mem_rename_predictor.cc', with_tag('gem5 trace'))
+    GTest('mem_rename_valuefile.test', 'mem_rename_valuefile.test.cc',
+        'mem_rename_valuefile.cc', '../reg_class.cc', '../../base/debug.cc',
+        '../../sim/bufval.cc')
 
     DebugFlag('BAC')
     DebugFlag('CommitRate')

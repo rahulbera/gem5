@@ -359,6 +359,20 @@ ROB::doSquash(ThreadID tid)
             if (mrn) {
                 mrn->noteSquashedPrediction(squashing->mrnAliased(),
                                             mrnSquashReason[tid]);
+                // Garfield value-file rendezvous: per-mode squash count,
+                // preserving vfPredictMade == Correct + Wrong + Squashed
+                // alongside the verify-or-squash accounting above.
+                if (squashing->mrnVfMode() == DynInst::MrnVfAlias) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeAlias);
+                } else if (squashing->mrnVfMode() ==
+                           DynInst::MrnVfProducerValue) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeProducerValue);
+                } else if (squashing->mrnVfMode() == DynInst::MrnVfLastValue) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeLastValue);
+                }
             }
         }
         // Producer-PC prediction (accuracy) squashed before validation.

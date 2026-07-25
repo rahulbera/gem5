@@ -665,6 +665,19 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
         iewStage->activityThisCycle();
     } else {
         if (inst->effAddrValid()) {
+            // Garfield value-file rendezvous: probe the store cache with
+            // this load's resolved effective address (design doc E4),
+            // rebinding or self-binding per the rendezvous rules. A
+            // cache-blocked load re-executes and reaches this point
+            // twice; the second probe is idempotent (SameBinding /
+            // AlreadySelfBound), so no re-execution guard is needed here.
+            if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+                if (mrn->valueFileEnabled() && inst->mrnVfEligible()) {
+                    mrn->vfLoadAddrResolved(inst->pcState().instAddr(),
+                                            inst->physEffAddr);
+                }
+            }
+
             auto it = inst->lqIt;
             ++it;
 
@@ -732,6 +745,20 @@ LSQUnit::executeStore(const DynInstPtr &store_inst)
         storeQueue[store_idx].canWB() = true;
 
         ++storesToWB;
+    }
+
+    // Garfield value-file rendezvous: publish this store's resolved
+    // effective address into the store cache (design doc E3), using the
+    // {vfIdx, gen} the store carried from its own rename -- never a
+    // re-lookup of the store/load cache, so a late-resolving instance
+    // still publishes its own binding.
+    if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
+        if (mrn->valueFileEnabled() && store_inst->mrnVfRef().valid() &&
+            store_inst->effAddrValid()) {
+            mrn->vfStoreAddrResolved(store_inst->mrnVfRef(),
+                                     store_inst->physEffAddr,
+                                     store_inst->seqNum);
+        }
     }
 
     return checkViolations(loadIt, store_inst);
@@ -1158,6 +1185,48 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                 }
             }
 
+            // Garfield value-file rendezvous: load data resolved (design
+            // doc E5) plus shadow (non-consuming) confidence training.
+            // Runs once per load, gated by the enclosing !isExecuted()
+            // block. vfLoadDataResolved writes the loaded value into the
+            // load's own cell only when it is self-bound (last-value);
+            // it is a no-op otherwise, so it is safe to call for every
+            // eligible load unconditionally. The below-confidence shadow
+            // modes compare against the true value purely to train
+            // confidence upward -- never consumed, never squashes.
+            // Consumed modes (alias / producer-value / last-value) train
+            // through their own verify paths below, not here.
+            if (MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                mrn && mrn->valueFileEnabled() && inst->isLoad() &&
+                inst->mrnVfEligible() && inst->numDestRegs() > 0) {
+                const Addr load_pc = inst->pcState().instAddr();
+                const RegVal actual =
+                    cpu->getReg(inst->renamedDestIdx(0), inst->threadNumber);
+                mrn->vfLoadDataResolved(load_pc, actual);
+                switch (inst->mrnVfMode()) {
+                    case DynInst::MrnVfShadowValue: {
+                        const bool ok = actual == inst->mrnVfShadowVal();
+                        mrn->vfNoteShadow(ok);
+                        mrn->vfTrainVerify(load_pc, inst->mrnVfRef(), ok);
+                        break;
+                    }
+                    case DynInst::MrnVfShadowPtr: {
+                        PhysRegIdPtr p = inst->mrnAliasProducer();
+                        if (p && iewStage->isRegReady(p)) {
+                            const bool ok =
+                                actual == cpu->getReg(p, inst->threadNumber);
+                            mrn->vfNoteShadow(ok);
+                            mrn->vfTrainVerify(load_pc, inst->mrnVfRef(), ok);
+                        } else {
+                            mrn->vfNoteShadowSkipped();
+                        }
+                        break;
+                    }
+                    default:
+                        break; // consumed modes train via their verify paths
+                }
+            }
+
             // Garfield MRN: verify a forwarded (memory-renamed) load. After
             // completeAcc the load's own renamed destination holds the
             // architecturally correct value. The verify branches on the
@@ -1177,6 +1246,20 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                     RegVal true_val = cpu->getReg(inst->renamedDestIdx(0),
                                                   inst->threadNumber);
                     MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                    // Garfield value-file rendezvous: a consumed
+                    // producer-value or last-value forward verifies
+                    // through this same value compare -- train its
+                    // per-mode outcome and confidence alongside the
+                    // old-path bookkeeping above (harmless no-op on the
+                    // old tables for a value-file load).
+                    const bool vf_consumed_value =
+                        mrn && mrn->valueFileEnabled() &&
+                        (inst->mrnVfMode() == DynInst::MrnVfProducerValue ||
+                         inst->mrnVfMode() == DynInst::MrnVfLastValue);
+                    const int vf_mode_index =
+                        inst->mrnVfMode() == DynInst::MrnVfProducerValue
+                            ? MemRenamePredictor::VfModeProducerValue
+                            : MemRenamePredictor::VfModeLastValue;
                     if (true_val != inst->mrnPredVal()) {
                         // Flush cost: the load and every younger in-flight
                         // inst is squashed (inclusive). getCurrentInstSeq is
@@ -1192,6 +1275,12 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                         if (mrn) {
                             mrn->mispredict(inst->pcState().instAddr(),
                                             squashed);
+                            if (vf_consumed_value) {
+                                mrn->vfNotePredictOutcome(vf_mode_index,
+                                                          false);
+                                mrn->vfTrainVerify(inst->pcState().instAddr(),
+                                                   inst->mrnVfRef(), false);
+                            }
                         }
                         DPRINTF(MRN,
                                 "[tid:%i] [sn:%llu] MRN value mispredict PC "
@@ -1207,6 +1296,11 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                         inst->setMrnResolved();
                         if (mrn) {
                             mrn->noteCorrect();
+                            if (vf_consumed_value) {
+                                mrn->vfNotePredictOutcome(vf_mode_index, true);
+                                mrn->vfTrainVerify(inst->pcState().instAddr(),
+                                                   inst->mrnVfRef(), true);
+                            }
                         }
                     }
                 }
@@ -1843,6 +1937,16 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
         if (mrn) {
             mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), false);
             mrn->aliasMispredict(load->pcState().instAddr(), squashed);
+            // Garfield value-file rendezvous: a consumed alias trains
+            // its per-mode outcome and confidence through this same
+            // verify (harmless no-op on the old tables above for a
+            // value-file load).
+            if (load->mrnVfMode() == DynInst::MrnVfAlias) {
+                mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,
+                                          false);
+                mrn->vfTrainVerify(load->pcState().instAddr(),
+                                   load->mrnVfRef(), false);
+            }
         }
         DPRINTF(MRN,
                 "[tid:%i] [sn:%llu] MRN alias mispredict PC %s pred=%#x "
@@ -1856,6 +1960,12 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
         if (mrn) {
             mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), true);
             mrn->noteAliasCorrect();
+            if (load->mrnVfMode() == DynInst::MrnVfAlias) {
+                mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,
+                                          true);
+                mrn->vfTrainVerify(load->pcState().instAddr(),
+                                   load->mrnVfRef(), true);
+            }
         }
         DPRINTF(MRN,
                 "[tid:%i] [sn:%llu] MRN alias verified PC %s val=%#x "

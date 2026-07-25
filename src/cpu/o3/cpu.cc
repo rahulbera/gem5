@@ -1286,6 +1286,19 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
             if (mrn) {
                 mrn->noteSquashedPrediction(inst->mrnAliased(),
                                             rob.getMrnSquashReason(tid));
+                // Garfield value-file rendezvous: per-mode squash count,
+                // preserving vfPredictMade == Correct + Wrong + Squashed
+                // alongside the verify-or-squash accounting above.
+                if (inst->mrnVfMode() == DynInst::MrnVfAlias) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeAlias);
+                } else if (inst->mrnVfMode() == DynInst::MrnVfProducerValue) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeProducerValue);
+                } else if (inst->mrnVfMode() == DynInst::MrnVfLastValue) {
+                    mrn->vfNotePredictSquashed(
+                        MemRenamePredictor::VfModeLastValue);
+                }
             }
         }
         // Producer-PC prediction (accuracy) squashed before validation.

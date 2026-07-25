@@ -836,6 +836,14 @@ Rename::renameInsts(ThreadID tid)
                                 vf_value = cr.value;
                                 vf_value_pending = true;
                                 vf_value_mode = DynInst::MrnVfLastValue;
+                            } else if (cr.ptrValid && !ptr_usable) {
+                                // Confident and ptr-bound, but the
+                                // producer physreg fails the liveness
+                                // guards (dead, fixed-mapping, or
+                                // non-integer): nothing usable to alias
+                                // or value-forward from. Without this,
+                                // the binding would be a silent no-op.
+                                memRenamePred->vfNotePtrUnusable();
                             }
                         } else {
                             // Below threshold: snapshot what would have

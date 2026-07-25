@@ -634,6 +634,16 @@ class MemRenamePredictor : public SimObject
         stats.vfBelowConfSuppressed++;
     }
 
+    /** Value file: a confident, ptr-bound cell whose producer physreg
+     *  failed the rename-time liveness guards (dead, fixed-mapping, or
+     *  non-integer) -- nothing was usable to alias or value-forward
+     *  from, so the binding was silently unused. */
+    void
+    vfNotePtrUnusable()
+    {
+        stats.vfPtrUnusable++;
+    }
+
     /** Value file: a shadow (non-forwarding) comparison against the true
      *  load value, used to measure would-be accuracy without forwarding. */
     void
@@ -806,6 +816,9 @@ class MemRenamePredictor : public SimObject
         /** Value file: rename-time lookups that were bound but below the
          *  confidence threshold, so no prediction was made. */
         statistics::Scalar vfBelowConfSuppressed;
+        /** Confident pointer bindings unusable at rename: producer
+         *  physreg dead, fixed-mapping, or non-integer. */
+        statistics::Scalar vfPtrUnusable;
         /** Value file: shadow comparisons that matched the true load
          *  value. */
         statistics::Scalar vfShadowCorrect;

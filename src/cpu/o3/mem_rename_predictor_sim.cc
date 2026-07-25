@@ -148,6 +148,9 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(vfBelowConfSuppressed, statistics::units::Count::get(),
                "Value-file rename-time lookups that were bound but below "
                "the confidence threshold, so no prediction was made"),
+      ADD_STAT(vfPtrUnusable, statistics::units::Count::get(),
+               "Confident pointer bindings unusable at rename: producer "
+               "physreg dead, fixed-mapping, or non-integer"),
       ADD_STAT(vfShadowCorrect, statistics::units::Count::get(),
                "Value-file shadow comparisons that matched the true load "
                "value"),

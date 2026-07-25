@@ -644,6 +644,17 @@ class MemRenamePredictor : public SimObject
         stats.vfPtrUnusable++;
     }
 
+    /** Value file: a confident binding whose applicable consumption mode
+     *  is disabled by configuration (e.g. a ready producer with
+     *  producer-value forwarding off, or a value-only cell with
+     *  last-value forwarding off) -- nothing was consumed. Lets
+     *  single-mode configurations see what they leave on the table. */
+    void
+    vfNoteConfidentUnconsumed()
+    {
+        stats.vfConfidentUnconsumed++;
+    }
+
     /** Value file: a shadow (non-forwarding) comparison against the true
      *  load value, used to measure would-be accuracy without forwarding. */
     void
@@ -819,6 +830,9 @@ class MemRenamePredictor : public SimObject
         /** Confident pointer bindings unusable at rename: producer
          *  physreg dead, fixed-mapping, or non-integer. */
         statistics::Scalar vfPtrUnusable;
+        /** Confident bindings whose applicable consumption mode was
+         *  disabled by configuration, so nothing was consumed. */
+        statistics::Scalar vfConfidentUnconsumed;
         /** Value file: shadow comparisons that matched the true load
          *  value. */
         statistics::Scalar vfShadowCorrect;

@@ -151,6 +151,9 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(vfPtrUnusable, statistics::units::Count::get(),
                "Confident pointer bindings unusable at rename: producer "
                "physreg dead, fixed-mapping, or non-integer"),
+      ADD_STAT(vfConfidentUnconsumed, statistics::units::Count::get(),
+               "Confident bindings whose applicable consumption mode was "
+               "disabled by configuration, so nothing was consumed"),
       ADD_STAT(vfShadowCorrect, statistics::units::Count::get(),
                "Value-file shadow comparisons that matched the true load "
                "value"),

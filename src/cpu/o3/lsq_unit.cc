@@ -666,8 +666,9 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
     } else {
         if (inst->effAddrValid()) {
             // Garfield value-file rendezvous: probe the store cache with
-            // this load's resolved effective address (design doc E4),
-            // rebinding or self-binding per the rendezvous rules. A
+            // this load's resolved effective address (the load-probe
+            // event, design doc §4), rebinding or self-binding per the
+            // rendezvous rules. A
             // cache-blocked load re-executes and reaches this point
             // twice; the second probe is idempotent (SameBinding /
             // AlreadySelfBound), so no re-execution guard is needed here.
@@ -748,7 +749,8 @@ LSQUnit::executeStore(const DynInstPtr &store_inst)
     }
 
     // Garfield value-file rendezvous: publish this store's resolved
-    // effective address into the store cache (design doc E3), using the
+    // effective address into the store cache (the store-publish event,
+    // design doc §4), using the
     // {vfIdx, gen} the store carried from its own rename -- never a
     // re-lookup of the store/load cache, so a late-resolving instance
     // still publishes its own binding.
@@ -1185,8 +1187,9 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                 }
             }
 
-            // Garfield value-file rendezvous: load data resolved (design
-            // doc E5) plus shadow (non-consuming) confidence training.
+            // Garfield value-file rendezvous: load data resolved (the
+            // load-data event, design doc §4) plus shadow
+            // (non-consuming) confidence training.
             // Runs once per load, gated by the enclosing !isExecuted()
             // block. vfLoadDataResolved writes the loaded value into the
             // load's own cell only when it is self-bound (last-value);

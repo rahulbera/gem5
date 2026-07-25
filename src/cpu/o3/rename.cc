@@ -844,6 +844,15 @@ Rename::renameInsts(ThreadID tid)
                                 // or value-forward from. Without this,
                                 // the binding would be a silent no-op.
                                 memRenamePred->vfNotePtrUnusable();
+                            } else {
+                                // Confident binding whose applicable
+                                // consumption mode is disabled (e.g. a
+                                // ready producer with producer-value
+                                // forwarding off, or a value-only cell
+                                // with last-value forwarding off).
+                                // Counted so single-mode configurations
+                                // can see what they leave unconsumed.
+                                memRenamePred->vfNoteConfidentUnconsumed();
                             }
                         } else {
                             // Below threshold: snapshot what would have

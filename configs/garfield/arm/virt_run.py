@@ -53,7 +53,6 @@ from m5.objects import (
     Armv8,
     CowDiskImage,
     FetchDirectedPrefetcher,
-    MemRenamePredictor,
     QEMU_Virt,
     RawDiskImage,
     VirtIOBlock,
@@ -67,16 +66,11 @@ addToPath("../..")
 from garfield.arm import (
     cache_hierarchy,
     neoverse_v2,
+    sim_opts,
 )
 
 from gem5.components.boards.arm_board import ArmBoard
 from gem5.components.boards.mem_mode import MemMode
-from gem5.components.memory.single_channel import (
-    DIMM_DDR5_4400,
-    DIMM_DDR5_6400,
-    DIMM_DDR5_8400,
-    SingleChannelDDR4_2400,
-)
 from gem5.components.processors.base_cpu_core import BaseCPUCore
 from gem5.components.processors.cpu_types import CPUTypes
 from gem5.components.processors.simple_core import SimpleCore
@@ -101,12 +95,6 @@ DEFAULT_BOOTLOADER = str(
 )
 DEFAULT_KERNEL = "/tmp/gem5_res/arm64-linux-kernel-6.8.12-1.0.0"
 
-MEM_FACTORIES = {
-    "DDR4_2400": SingleChannelDDR4_2400,
-    "DDR5_4400": DIMM_DDR5_4400,
-    "DDR5_6400": DIMM_DDR5_6400,
-    "DDR5_8400": DIMM_DDR5_8400,
-}
 
 
 class QemuVirtBoard(ArmBoard):
@@ -170,11 +158,6 @@ def parse_args():
                         help="vmlinux (same bits the guest booted).")
     parser.add_argument("--bootloader", type=str,
                         default=DEFAULT_BOOTLOADER)
-    parser.add_argument("--clk-freq", type=str, default="3GHz")
-    parser.add_argument("--mem-type", type=str, default="DDR5_6400",
-                        choices=list(MEM_FACTORIES.keys()))
-    parser.add_argument("--mem-size", type=str, default="16GiB",
-                        help="MUST match the snapshot (QPoints QEMU -m).")
     parser.add_argument("--release", type=str, default="armv8",
                         choices=["armv8", "kvm-host"],
                         help="Restore CPU feature envelope. armv8: TCG "
@@ -186,29 +169,19 @@ def parse_args():
     parser.add_argument("--settle-insts", type=int, default=0)
     parser.add_argument("--warmup-insts", type=int, default=int(1e6))
     parser.add_argument("--detailed-insts", type=int, default=int(5e6))
-    parser.add_argument("--progress-interval", type=str, default="0Hz")
     parser.add_argument("--atomic-only", action="store_true",
                         help="Restore-verify mode: run the ATOMIC core only "
                              "(no switch, no detailed region) so long guest "
                              "windows are affordable; exit at "
                              "--atomic-max-insts committed instructions.")
     parser.add_argument("--atomic-max-insts", type=int, default=int(30e9))
-    # --- prefetcher / front-end ablation (identical to fs_run.py) --------
-    parser.add_argument("--disable-fdp", action="store_true")
-    parser.add_argument("--disable-l1d-prefetch", action="store_true")
-    parser.add_argument("--disable-l2-prefetch", action="store_true")
-    # --- garfield knobs (identical to fs_run.py) -------------------------
-    parser.add_argument("--ghost-exec", action="store_true")
-    parser.add_argument("--use-mrn", action="store_true")
-    parser.add_argument("--mrn-conf-bits", type=int, default=4)
-    parser.add_argument("--mrn-conf-threshold", type=int, default=8)
-    parser.add_argument("--mrn-store-entries", type=int, default=1024)
-    parser.add_argument("--mrn-load-entries", type=int, default=1024)
-    parser.add_argument("--mrn-mode", type=str, default="value-only",
-                        choices=["value-only", "unified"])
-    parser.add_argument("--mrn-correlation", type=str, default="lsq-forward",
-                        choices=["lsq-forward", "store-set"])
-    parser.add_argument("--mrn-allow-nonint", action="store_true")
+    # --- shared knobs (machine / prefetcher / garfield), same as
+    # fs_run.py and se_run.py -------------------------------------------
+    sim_opts.add_common_args(
+        parser,
+        mem_size_default="16GiB",
+        mem_size_help="Guest DRAM size (must cover the snapshot's RAM).",
+    )
     return parser.parse_args()
 
 
@@ -247,21 +220,7 @@ def make_neoverse_v2_core():
     # BaseCPU::takeOverFrom asserts the swapped-in and swapped-out cores
     # share a cpuId.
     core = BaseCPUCore(neoverse_v2.NeoverseV2(cpu_id=0), isa=ISA.ARM)
-    cpu = core.core
-    if args.disable_fdp:
-        cpu.decoupledFrontEnd = False
-    cpu.progress_interval = args.progress_interval
-    cpu.ghostExec = args.ghost_exec
-    if args.use_mrn:
-        cpu.memRenamePredictor = MemRenamePredictor(
-            confBits=args.mrn_conf_bits,
-            confThreshold=args.mrn_conf_threshold,
-            storeTableEntries=args.mrn_store_entries,
-            loadTableEntries=args.mrn_load_entries,
-            mrnMode=args.mrn_mode.replace("-", "_"),
-            mrnCorrelation=args.mrn_correlation.replace("-", "_"),
-            predictIntLoadsOnly=not args.mrn_allow_nonint,
-        )
+    sim_opts.apply_core_knobs(core.core, args)
     return core
 
 
@@ -346,7 +305,7 @@ class NeoverseV2RestoreProcessor(SwitchableProcessor):
 
 
 # ---- assemble the board ----------------------------------------------------
-memory = MEM_FACTORIES[args.mem_type](size=args.mem_size)
+memory = sim_opts.make_memory(args)
 
 detailed_core = make_neoverse_v2_core()
 
@@ -359,10 +318,7 @@ if args.gen_ref:
     cache = NoCache()
 else:
     cache = RestoreNeoverseV2CacheHierarchy(
-        detailed_core,
-        enable_fdp=not args.disable_fdp,
-        enable_l1d_prefetch=not args.disable_l1d_prefetch,
-        enable_l2_prefetch=not args.disable_l2_prefetch,
+        detailed_core, **sim_opts.cache_kwargs(args)
     )
 
 processor = NeoverseV2RestoreProcessor(detailed_core, make_atomic_core())
@@ -425,9 +381,8 @@ processor.prime_switch_core_active()
 
 print("=== garfield QEMU-virt detailed restore (Track B) ===")
 print(f"  core     : NeoverseV2 (ArmO3CPU) restore @ {args.clk_freq}")
-print(f"  dram     : {args.mem_type} @ {args.mem_size}")
-print(f"  mrn      : {'on (' + args.mrn_mode + ')' if args.use_mrn else 'off'}"
-      f"  ghostExec={args.ghost_exec}")
+for line in sim_opts.describe(args):
+    print(line)
 print(f"  restore  : {args.restore_dir}")
 if args.atomic_only:
     print(f"  region   : ATOMIC-only max-insts={args.atomic_max_insts:,} "

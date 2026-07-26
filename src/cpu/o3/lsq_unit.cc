@@ -673,7 +673,7 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             // twice; the second probe is idempotent (SameBinding /
             // AlreadySelfBound), so no re-execution guard is needed here.
             if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
-                if (mrn->valueFileEnabled() && inst->mrnVfEligible()) {
+                if (inst->mrnVfEligible()) {
                     mrn->vfLoadAddrResolved(inst->pcState().instAddr(),
                                             inst->physEffAddr);
                 }
@@ -755,8 +755,7 @@ LSQUnit::executeStore(const DynInstPtr &store_inst)
     // re-lookup of the store/load cache, so a late-resolving instance
     // still publishes its own binding.
     if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
-        if (mrn->valueFileEnabled() && store_inst->mrnVfRef().valid() &&
-            store_inst->effAddrValid()) {
+        if (store_inst->mrnVfRef().valid() && store_inst->effAddrValid()) {
             mrn->vfStoreAddrResolved(store_inst->mrnVfRef(),
                                      store_inst->physEffAddr,
                                      store_inst->seqNum);
@@ -904,20 +903,6 @@ LSQUnit::writebackStores()
             memset(inst->memData, 0, request->_size);
         else
             memcpy(inst->memData, storeWBIt->data(), request->_size);
-
-        // Garfield MRN: deposit this committed store's value into the
-        // predictor's value file, keyed by effective address, so a later
-        // load to the same address can be value-predicted. writebackStores
-        // runs only for committed (non-squashed) stores, so this is the
-        // correct-path deposit; it is training only and has no timing effect.
-        MemRenamePredictor *mrn = iewStage->getMemRenamePred();
-        if (mrn && mrn->valueForwardingEnabled() && inst->effAddrValid()) {
-            uint64_t store_val = 0;
-            size_t n = request->_size < sizeof(store_val) ? request->_size
-                                                          : sizeof(store_val);
-            memcpy(&store_val, inst->memData, n);
-            mrn->commitStore(inst->effAddr, store_val);
-        }
 
         request->buildPackets();
 
@@ -1175,18 +1160,6 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             // Complete access to copy data to proper place.
             inst->completeAcc(pkt);
 
-            // Garfield MRN ACCURACY: resolve a made producer-PC prediction.
-            // The load has executed; it was confirmed at the LSQ forward iff
-            // it actually forwarded from the predicted store. Squashed loads
-            // return early above, so they are excluded from the denominator.
-            if (inst->mrnProducerPredicted() && !inst->mrnProducerResolved()) {
-                inst->setMrnProducerResolved();
-                if (MemRenamePredictor *mrn = iewStage->getMemRenamePred()) {
-                    mrn->noteProducerPredictOutcome(
-                        inst->mrnProducerConfirmed());
-                }
-            }
-
             // Garfield value-file rendezvous: load data resolved (the
             // load-data event, design doc §4) plus shadow
             // (non-consuming) confidence training.
@@ -1200,8 +1173,8 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
             // Consumed modes (alias / producer-value / last-value) train
             // through their own verify paths below, not here.
             if (MemRenamePredictor *mrn = iewStage->getMemRenamePred();
-                mrn && mrn->valueFileEnabled() && inst->isLoad() &&
-                inst->mrnVfEligible() && inst->numDestRegs() > 0) {
+                mrn && inst->isLoad() && inst->mrnVfEligible() &&
+                inst->numDestRegs() > 0) {
                 const Addr load_pc = inst->pcState().instAddr();
                 const RegVal actual =
                     cpu->getReg(inst->renamedDestIdx(0), inst->threadNumber);
@@ -1253,10 +1226,9 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                     // producer-value or last-value forward verifies
                     // through this same value compare -- train its
                     // per-mode outcome and confidence alongside the
-                    // old-path bookkeeping above (harmless no-op on the
-                    // old tables for a value-file load).
+                    // shared stats bookkeeping above.
                     const bool vf_consumed_value =
-                        mrn && mrn->valueFileEnabled() &&
+                        mrn &&
                         (inst->mrnVfMode() == DynInst::MrnVfProducerValue ||
                          inst->mrnVfMode() == DynInst::MrnVfLastValue);
                     const int vf_mode_index =
@@ -1687,31 +1659,6 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                         "addr %#x\n", store_it._idx,
                         request->mainReq()->getVaddr());
 
-                // Garfield MRN correlator (LSQ-forward): this load fully
-                // forwarded from this store, so bind loadPC -> storePC. At a
-                // future instance of this load PC, rename can find the
-                // (youngest in-flight) store with this PC and alias the load
-                // to its data physreg. The correlator is maintained only
-                // when the aliasing path is enabled.
-                MemRenamePredictor *mrn = iewStage->getMemRenamePred();
-                if (mrn && mrn->aliasingEnabled()) {
-                    const Addr load_pc = load_inst->pcState().instAddr();
-                    const Addr store_pc =
-                        store_it->instruction()->pcState().instAddr();
-                    // ACCURACY: this load forwarded from store_pc; if the
-                    // correlator predicted a producer for it at rename,
-                    // confirm the prediction when the two match (writeback
-                    // then resolves correct/wrong).
-                    if (load_inst->mrnProducerPredicted() &&
-                        load_inst->mrnPredStorePC() == store_pc) {
-                        load_inst->setMrnProducerConfirmed();
-                    }
-                    // COVERAGE: score the correlator's current binding against
-                    // the store the load actually forwarded from, then train.
-                    mrn->noteProducerCoverage(load_pc, store_pc);
-                    mrn->trainForward(load_pc, store_pc);
-                }
-
                 PacketPtr data_pkt = new Packet(request->mainReq(),
                         MemCmd::ReadReq);
                 data_pkt->dataStatic(load_inst->memData);
@@ -1897,25 +1844,6 @@ LSQUnit::getStoreHeadSeqNum()
         return 0;
 }
 
-DynInstPtr
-LSQUnit::findYoungestStoreByPC(Addr pc)
-{
-    // Scan the store queue newest -> oldest (end() is one past the youngest;
-    // begin() is the oldest). Return the youngest in-flight store with this
-    // PC so the alias binds to the most recent producer.
-    for (auto it = storeQueue.end(); it != storeQueue.begin();) {
-        --it;
-        if (!it->valid()) {
-            continue;
-        }
-        const DynInstPtr &st = it->instruction();
-        if (st && st->pcState().instAddr() == pc) {
-            return st;
-        }
-    }
-    return nullptr;
-}
-
 void
 LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
 {
@@ -1938,11 +1866,10 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
         // verified or the ROB would re-account it as a squashed prediction.
         load->setMrnResolved();
         if (mrn) {
-            mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), false);
             mrn->aliasMispredict(load->pcState().instAddr(), squashed);
             // Garfield value-file rendezvous: a consumed alias trains
             // its per-mode outcome and confidence through this same
-            // verify (harmless no-op on the old tables above for a
+            // verify (stats-only accounting above for a
             // value-file load).
             if (load->mrnVfMode() == DynInst::MrnVfAlias) {
                 mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,
@@ -1961,7 +1888,6 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
     } else {
         load->setMrnResolved();
         if (mrn) {
-            mrn->noteAliasOutcomeByStaleness(load->mrnAliasStale(), true);
             mrn->noteAliasCorrect();
             if (load->mrnVfMode() == DynInst::MrnVfAlias) {
                 mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,

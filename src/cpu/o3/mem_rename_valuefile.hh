@@ -15,7 +15,7 @@ namespace o3
 
 /**
  * Core tables for the value-file rendezvous memory-renaming model (Garfield
- * MRN, `mrnCorrelation == value_file`).
+ * MRN).
  *
  * Based on Tyson & Austin's memory renaming (MICRO-30, 1997), with the
  * concrete table structure -- Store/Load Cache + Value File + Store Cache,
@@ -30,7 +30,7 @@ namespace o3
  * the program-order-youngest earlier static instance: this removes the
  * store-instance hunt the older correlator-based path needs.
  *
- * `MrnValueFileTables` is a params-free core class (mirrors `MrnTables` in
+ * `MrnValueFileTables` is a params-free core class (in the style of
  * mem_rename_predictor.hh): it is built purely from `MrnVfConfig` so it can
  * be constructed and unit-tested without the SimObject/params machinery.
  * `PhysRegIdPtr` is stored and returned opaquely -- this class never

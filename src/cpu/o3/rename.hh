@@ -257,14 +257,6 @@ class Rename
     /** Renames the destination registers of an instruction. */
     void renameDestRegs(const DynInstPtr &inst, ThreadID tid);
 
-    /** Garfield MRN aliasing: if this load has an in-flight producing store
-     *  whose integer data physreg can be safely aliased, stash that producer
-     *  on the instruction and return true; the map surgery happens in
-     *  renameDestRegs. Returns false (no alias) when the correlator has no
-     *  binding for the load, it is not a simple int load, no producer is
-     *  found, or the producer reg is unsuitable. */
-    bool tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid);
-
     /** Should we SerializeBefore the current instruction */
     void handleMiscRegWaW(DynInstPtr &inst, ThreadID tid);
 

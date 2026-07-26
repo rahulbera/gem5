@@ -193,23 +193,8 @@ class DynInst : public ExecContext, public RefCounted
         IsGhost,       /// Garfield: skip OoO IQ entry, issue
                        /// bandwidth, and execution port
         Mrned,         /// Garfield: load was memory-renamed (MRN)
-        MrnSnapValid,  /// Garfield: a rename-time value snapshot was captured
-                       /// for this load (for confidence training at commit)
         MrnResolved,   /// Garfield: the MRN prediction was resolved (correct
                        /// or mispredicted); a squash must not re-account it
-        MrnAliasStale, /// Garfield (diagnostic): the producer alias resolved
-                       /// to a physreg different from the one the located
-                       /// store captured, i.e. the data arch reg was
-                       /// redefined in between
-        MrnProducerPredicted, /// Garfield: the correlator predicted a
-                              /// producing store PC for this load at rename
-                              /// (see _mrnPredStorePC)
-        MrnProducerConfirmed, /// Garfield: this load actually forwarded from
-                              /// the predicted store PC (the prediction was
-                              /// correct)
-        MrnProducerResolved,  /// Garfield: the producer-PC prediction has been
-                              /// accounted (correct/wrong at writeback, or
-                              /// squashed); prevents double-counting
         MrnVfEligible, /// Garfield value-file rendezvous: this load passed
                        /// the participation guards at rename (single
                        /// integer destination)
@@ -431,27 +416,6 @@ class DynInst : public ExecContext, public RefCounted
         instFlags[Mrned] = true;
     }
 
-    /** Garfield: the value the prediction WOULD have used for this
-     *  load, snapshotted at rename (for every predictor-eligible integer
-     *  load, not only forwarded ones). Confidence is trained against this at
-     *  commit so a changing recurrence cannot report a spurious match. */
-    bool
-    mrnSnapValid() const
-    {
-        return instFlags[MrnSnapValid];
-    }
-    RegVal
-    mrnSnapValue() const
-    {
-        return _mrnSnapValue;
-    }
-    void
-    setMrnSnap(RegVal v)
-    {
-        instFlags[MrnSnapValid] = true;
-        _mrnSnapValue = v;
-    }
-
     /** Garfield: the MRN prediction for this load has been resolved --
      *  it verified correct or it mispredicted. Set on all four resolution
      *  arms in LSQUnit, including the mispredict arms: squashDueToMemOrder
@@ -467,62 +431,6 @@ class DynInst : public ExecContext, public RefCounted
     setMrnResolved()
     {
         instFlags[MrnResolved] = true;
-    }
-
-    /** Garfield (diagnostic): the producer alias resolved to the CURRENT
-     * rename-map mapping of the store's data arch reg, which differs from the
-     * physreg the located store itself captured. Tests whether producer
-     * aliasing is predicting register liveness rather than memory dataflow. */
-    bool
-    mrnAliasStale() const
-    {
-        return instFlags[MrnAliasStale];
-    }
-    void
-    setMrnAliasStale()
-    {
-        instFlags[MrnAliasStale] = true;
-    }
-
-    /** Garfield: the correlator's predicted producing store PC for this load,
-     *  snapshotted at rename. Confirmed at the LSQ forward against the store
-     *  the load actually forwards from, to measure the correlator's precision
-     *  (of predictions MADE, how many are correct). */
-    bool
-    mrnProducerPredicted() const
-    {
-        return instFlags[MrnProducerPredicted];
-    }
-    Addr
-    mrnPredStorePC() const
-    {
-        return _mrnPredStorePC;
-    }
-    void
-    setMrnProducerPredicted(Addr storePC)
-    {
-        instFlags[MrnProducerPredicted] = true;
-        _mrnPredStorePC = storePC;
-    }
-    bool
-    mrnProducerConfirmed() const
-    {
-        return instFlags[MrnProducerConfirmed];
-    }
-    void
-    setMrnProducerConfirmed()
-    {
-        instFlags[MrnProducerConfirmed] = true;
-    }
-    bool
-    mrnProducerResolved() const
-    {
-        return instFlags[MrnProducerResolved];
-    }
-    void
-    setMrnProducerResolved()
-    {
-        instFlags[MrnProducerResolved] = true;
     }
 
     /** Garfield: MRN-predicted value snapshotted for this load. */
@@ -1298,9 +1206,6 @@ class DynInst : public ExecContext, public RefCounted
     /** Garfield: MRN-predicted value snapshotted for this load. */
     RegVal _mrnPredVal = 0;
 
-    /** Garfield: rename-time value snapshot for confidence training. */
-    RegVal _mrnSnapValue = 0;
-
     /** Garfield: MRN forwarding path taken by this load. */
     MrnPath _mrnPath = MrnNone;
 
@@ -1316,9 +1221,6 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield MRN aliasing: producing store's sequence number. */
     InstSeqNum _mrnProducerSeq = 0;
-
-    /** Garfield: correlator-predicted producing store PC (0 if none). */
-    Addr _mrnPredStorePC = 0;
 
     /** Garfield value-file rendezvous: the value-file cell this store
      *  deposited into, or this load is bound to, at rename (-1 = no

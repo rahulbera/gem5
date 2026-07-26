@@ -166,6 +166,19 @@ be ranked against #1. Sizing argument only so far.
 
 ---
 
+## Legacy path deleted (2026-07-26)
+
+The value-snapshot path (MrnTables: store cache / load cache / value file,
+commit-time training) and the LSQ-forward correlator (fwdCache,
+tryMemRenameAlias, findYoungestStoreByPC, the staleness gate) were **deleted**
+after the composition study showed zero net contribution in every corner of
+the fallback-reach x threshold space (research log, Key Results 6-7). The
+value-file rendezvous model is now the single mechanism; --use-mrn selects
+it. Items 1a/1a-followup/1c/2 below and the "Resolved / refuted" entries
+about the deleted machinery are HISTORICAL — they describe code that no
+longer exists; do not re-litigate or resurrect without the research-log
+context.
+
 ## Resolved / refuted — don't re-litigate
 
 - **Producer aliasing bet on register liveness, not memory dataflow.** `rename.cc`

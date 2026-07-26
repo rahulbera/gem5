@@ -581,10 +581,6 @@ class LSQUnit
     /** Returns the sequence number of the head store instruction. */
     InstSeqNum getStoreHeadSeqNum();
 
-    /** Garfield MRN aliasing: the youngest in-flight store whose PC
-     * matches, or nullptr. Scans the store queue newest->oldest. */
-    DynInstPtr findYoungestStoreByPC(Addr pc);
-
     /** Garfield MRN aliasing: a producer physreg just wrote back;
      * verify any aliased loads on this unit that were deferred waiting on it.
      */

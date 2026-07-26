@@ -749,28 +749,14 @@ Rename::renameInsts(ThreadID tid)
         // Garfield MRN: decide a load's forwarding path *before* renaming its
         // destination, so a producer alias can divert the destination map
         // entry. The two paths are independent: value forwarding is gated on
-        // its own confidence (predict), producer aliasing on its own trigger
-        // (a correlator binding, inside tryMemRenameAlias). Aliasing takes
-        // priority when both apply.
-        //
-        // When the value-file rendezvous model is selected
-        // (mrnCorrelation == value_file), it replaces both of the above for
-        // this instruction: a store deposits a producer binding into its
-        // PC's cell at its own rename; a load looks its PC's cell up and
-        // resolves alias vs. value-forward vs. shadow-train, also at its
-        // own rename (design doc §4). The old correlator-driven alias path
-        // (tryMemRenameAlias) never runs in this mode. The old
-        // value-snapshot path (predict/peek) still runs for an eligible
-        // load only when the model made no binding for it at all, so the
-        // two sources never both write a prediction for the same load
-        // (single-writer rule, design doc §4).
-        MrnPrediction mrnPred{false, 0};
-        bool mrnAliased = false;
+        // rename; a load looks its PC's cell up and resolves alias vs.
+        // value-forward vs. shadow-train, also at its own rename (design
+        // doc §4).
         bool vf_alias = false;
         bool vf_value_pending = false;
         RegVal vf_value = 0;
         uint8_t vf_value_mode = DynInst::MrnVfNone;
-        if (memRenamePred && memRenamePred->valueFileEnabled()) {
+        if (memRenamePred) {
             gem5::ThreadContext *tc = inst->tcBase();
             auto *isa = tc->getIsaPtr();
 
@@ -878,94 +864,16 @@ Rename::renameInsts(ThreadID tid)
                             memRenamePred->vfNoteBelowConf();
                         }
                     }
-                    // Single-writer rule: fall through to the old
-                    // value-snapshot path only when the value-file model
-                    // consumed nothing for this load. By default that
-                    // additionally requires NO binding at all; with
-                    // valueForwardOnUnconsumed, bound-but-unconsumed
-                    // loads (dead channel, below confidence, or the
-                    // applicable mode disabled) also fall through, since
-                    // they would otherwise be served by neither path.
-                    const bool vf_consumed = vf_alias || vf_value_pending;
-                    if (!vf_consumed &&
-                        (!cr.bound ||
-                         memRenamePred->valueForwardOnUnconsumed()) &&
-                        memRenamePred->valueForwardingEnabled()) {
-                        mrnPred = memRenamePred->predict(load_pc);
-                        const MrnPrediction snap =
-                            memRenamePred->peek(load_pc);
-                        if (snap.valid) {
-                            inst->setMrnSnap(snap.value);
-                        }
-                    }
                 }
-            }
-        } else if (memRenamePred && inst->isLoad() &&
-                   inst->numDestRegs() > 0) {
-            const Addr load_pc = inst->pcState().instAddr();
-            // Value path: confidence + the rename-time training snapshot.
-            if (memRenamePred->valueForwardingEnabled()) {
-                mrnPred = memRenamePred->predict(load_pc);
-                const MrnPrediction snap = memRenamePred->peek(load_pc);
-                if (snap.valid) {
-                    inst->setMrnSnap(snap.value);
-                }
-            }
-            // Alias path: its own trigger, not the value path's confidence.
-            if (memRenamePred->aliasingEnabled()) {
-                mrnAliased = tryMemRenameAlias(inst, inst->threadNumber);
             }
         }
 
         renameDestRegs(inst, inst->threadNumber);
 
-        // Garfield MRN value forwarding: if the predictor has a
-        // high-confidence value for this load and it was not aliased to a
-        // producer, forward the snapshot into the renamed destination and
-        // mark it ready so dependents can wake early. The load still executes
-        // normally; writeback verifies the forwarded value and squashes from
-        // the load (inclusive) on a mismatch. Restrict to integer
-        // destinations: value forwarding uses a scalar RegVal, and the RegVal
-        // setReg path panics on full vector registers. Skip fixed-mapping
-        // dests (e.g. the zero register), which are not renameable.
-        if (mrnPred.valid && !mrnAliased) {
-            PhysRegIdPtr dest = inst->renamedDestIdx(0);
-            if (dest->is(IntRegClass)) {
-                if (!dest->isFixedMapping()) {
-                    cpu->setReg(dest, mrnPred.value, inst->threadNumber);
-                    scoreboard->setReg(dest);
-                    inst->setMrned();
-                    inst->setMrnPath(DynInst::MrnValue);
-                    inst->setMrnPredVal(mrnPred.value);
-                    memRenamePred->noteForwarded();
-                    memRenamePred->noteForwardValue();
-                    DPRINTF(MRN,
-                            "[tid:%i] [sn:%llu] MRN forward PC %s "
-                            "value=%#x to renamed dest\n",
-                            inst->threadNumber, inst->seqNum, inst->pcState(),
-                            mrnPred.value);
-                }
-            } else if (!memRenamePred->predictIntLoadsOnly()) {
-                // Value forwarding uses a scalar RegVal; the regfile path
-                // panics on full vector registers. Integer-only is enforced by
-                // default (predictIntLoadsOnly); relaxing it for a
-                // non-integer load fails loudly rather than corrupting
-                // wide state.
-                panic(
-                    "MRN: value forwarding requested for a non-integer "
-                    "load (dest reg class %d, PC %s). Value forwarding uses a "
-                    "scalar RegVal and supports integer-destination "
-                    "loads only. Keep predictIntLoadsOnly=True "
-                    "(default), or implement wide-value forwarding "
-                    "before relaxing it.",
-                    (int)dest->classValue(), inst->pcState());
-            }
-        } else if (mrnAliased || vf_alias) {
-            // Producer aliasing: renameDestRegs pointed the load's destination
-            // at the in-flight producer's physreg. Mark it memory-renamed for
-            // the writeback verify (vs. the producer's value). Fires
-            // identically whether the alias came from the correlator path
-            // (mrnAliased) or the value-file rendezvous decision (vf_alias).
+        // Producer aliasing: renameDestRegs pointed the load's destination
+        // at the in-flight producer's physreg. Mark it memory-renamed for
+        // the writeback verify (vs. the producer's value).
+        if (vf_alias) {
             inst->setMrned();
             memRenamePred->noteForwarded();
             memRenamePred->noteForwardAlias();
@@ -973,11 +881,10 @@ Rename::renameInsts(ThreadID tid)
 
         // Garfield value-file rendezvous: consume a producer-value or
         // last-value binding decided above by forwarding it into the
-        // renamed destination, mirroring the old value path's forward.
-        // Restricted to integer, non-fixed-mapping destinations for the
-        // same reason as the old path (vfLoadRename's caller already
-        // required an integer destination at lookup, so this is a repeat of
-        // the fixed-mapping guard only).
+        // renamed destination, forwarding it into the renamed destination.
+        // Restricted to integer, non-fixed-mapping destinations
+        // (vfLoadRename's caller already required an integer destination
+        // at lookup, so this is a repeat of the fixed-mapping guard only).
         if (vf_value_pending) {
             PhysRegIdPtr dest = inst->renamedDestIdx(0);
             if (dest->is(IntRegClass) && !dest->isFixedMapping()) {
@@ -1407,112 +1314,6 @@ Rename::renameSrcRegs(const DynInstPtr &inst, ThreadID tid)
 
         ++stats.lookups;
     }
-}
-
-bool
-Rename::tryMemRenameAlias(const DynInstPtr &inst, ThreadID tid)
-{
-    // Only simple single-destination integer loads are aliased: the verify
-    // reads a scalar RegVal, and multi-dest loads (e.g. LDP / writeback
-    // forms) complicate the destination map surgery.
-    if (inst->numDestRegs() != 1) {
-        return false;
-    }
-
-    gem5::ThreadContext *tc = inst->tcBase();
-    auto *isa = tc->getIsaPtr();
-    const RegId load_dest_arch = inst->destRegIdx(0).flatten(*isa);
-    if (!load_dest_arch.is(IntRegClass)) {
-        return false;
-    }
-
-    const Addr load_pc = inst->pcState().instAddr();
-    const Addr store_pc = memRenamePred->predictProducerPC(load_pc);
-    if (!store_pc) {
-        return false;
-    }
-    // ACCURACY: the correlator made a producer-PC prediction. Snapshot it on
-    // the load and count it; the LSQ forward confirms whether the load really
-    // forwarded from this store, and writeback resolves correct/wrong. Done
-    // here, before the downstream in-flight-store / staleness gates, so the
-    // denominator is predictions MADE regardless of whether we alias.
-    inst->setMrnProducerPredicted(store_pc);
-    memRenamePred->noteProducerPredictMade();
-
-    DynInstPtr store = iew_ptr->ldstQueue.findYoungestStoreByPC(tid, store_pc);
-    if (!store || !store->isStore() || store->numSrcRegs() == 0) {
-        memRenamePred->noteAliasNoInflightStore();
-        return false;
-    }
-
-    // The data register is the last source for simple integer stores
-    // (STRX/STRW imm+reg). Anything else (store-pair, atomics, address-only
-    // last source) fails the integer guard here or is caught by the verify.
-    const int n = store->numSrcRegs();
-    const RegId data_arch = store->srcRegIdx(n - 1).flatten(*isa);
-    if (!data_arch.is(IntRegClass)) {
-        memRenamePred->noteAliasStoreDataNotInt();
-        return false;
-    }
-    // Alias to the CURRENT rename-map mapping of the store's data
-    // architectural register -- NOT the physreg the found store captured at
-    // its own rename. findYoungestStoreByPC returns the youngest store already
-    // in the store queue, but the same-iteration producing store has not been
-    // dispatched into the SQ yet at this load's rename, so its captured
-    // physreg holds an older iteration's (stale) value -- correct only for a
-    // stable value (mrncomm), wrong for a changing recurrence (mrnrec). The
-    // rename map always holds the current producer physreg (exactly what the
-    // same-iteration store will read), so both predict correctly.
-    PhysRegIdPtr producer = renameMap[tid]->lookup(data_arch);
-    if (!producer || !producer->is(IntRegClass) ||
-        producer->isFixedMapping() || producer->getRefCount() <= 0) {
-        memRenamePred->noteAliasProducerUnusable();
-        return false;
-    }
-
-    // producer == the load destination's current mapping is the common and
-    // INTENDED case here: a store->load recurrence (slot=X; X=slot) where the
-    // store's data register and the load's destination are the same arch reg
-    // X. The load just re-reads X's current value, so consumers should read
-    // the current producer physreg, and the load must keep map[X]=producer
-    // rather than take a fresh mapping. renameDestRegs handles this by keeping
-    // the mapping and skipping the refcount bump when producer == prevReg.
-    // This is exactly what lets a changing-value recurrence benefit from C, so
-    // there is deliberately no producer==cur rejection.
-    // Garfield: does the rename-map lookup still agree with the physreg the
-    // located store captured? A mismatch means data_arch was redefined
-    // between that store's rename and this load's rename, so the alias is a
-    // bet on register LIVENESS rather than on memory dataflow.
-    //
-    // Measured on 10M warmup + 50M detailed, producer aliasing:
-    //   agree    -> 100.0% correct (n=155 across gcc+cpython, zero errors)
-    //   disagree ->  29.9% on 721.gcc_r.2.0, 0.0% on 714.cpython_r.2.3
-    // and the disagreeing case is 96-100% of all alias attempts, so it
-    // accounts for essentially every alias mispredict.
-    //
-    // Rejecting here does not lose the prediction: the caller falls through
-    // to the value snapshot (see the `mrnPred.valid && !mrnAliased`
-    // branch in renameInsts), which verifies far better on the same loads.
-    const PhysRegIdPtr store_captured = store->renamedSrcIdx(n - 1);
-    const bool stale = (store_captured != producer);
-    if (stale) {
-        inst->setMrnAliasStale();
-    }
-    memRenamePred->noteAliasProducerStaleness(stale);
-    if (stale && memRenamePred->aliasRequireCurrentProducer()) {
-        memRenamePred->noteAliasStaleRejected();
-        return false;
-    }
-
-    inst->setMrnAliasProducer(producer);
-    inst->setMrnProducerSeq(store->seqNum);
-    inst->setMrnPath(DynInst::MrnAlias);
-    DPRINTF(MRN,
-            "[tid:%i] [sn:%llu] MRN alias load PC %s -> producer phys %i "
-            "(refcount %i) from store [sn:%llu] PC %#x\n",
-            tid, inst->seqNum, inst->pcState(), producer->index(),
-            producer->getRefCount(), store->seqNum, store_pc);
-    return true;
 }
 
 void

@@ -143,53 +143,11 @@ def add_common_args(
         help="MRN minimum confidence required to predict.",
     )
     garfield.add_argument(
-        "--mrn-store-entries",
-        type=int,
-        default=1024,
-        help="MRN store-cache entries.",
-    )
-    garfield.add_argument(
-        "--mrn-load-entries",
-        type=int,
-        default=1024,
-        help="MRN load-cache entries.",
-    )
-    garfield.add_argument(
-        "--mrn-no-value-forward",
-        action="store_true",
-        help="Disable the MRN value-forwarding path (on by default). Leaves "
-        "the producer-aliasing path unaffected.",
-    )
-    garfield.add_argument(
         "--mrn-alias",
         action="store_true",
         help="Enable the MRN producer-aliasing path (off by default). "
         "Independent of value forwarding; when both are on, aliasing takes "
         "priority.",
-    )
-    garfield.add_argument(
-        "--mrn-correlation",
-        type=str,
-        default="lsq-forward",
-        choices=["lsq-forward", "store-set", "value-file"],
-        help="Producer-binding source for producer aliasing: lsq-forward "
-        "(loadPC->storePC learned from LSQ forwarding), store-set (stub: "
-        "no producer found), or value-file (rendezvous model: a store "
-        "deposits its producer information at rename, learned by address "
-        "at execution).",
-    )
-    garfield.add_argument(
-        "--mrn-value-conf-threshold",
-        type=int,
-        default=0,
-        help="Confidence threshold for the value-snapshot path; 0 "
-        "inherits --mrn-conf-threshold.",
-    )
-    garfield.add_argument(
-        "--mrn-value-on-unconsumed",
-        action="store_true",
-        help="Run the value-snapshot path also for loads whose "
-        "value-file binding made no consumed prediction.",
     )
     garfield.add_argument(
         "--mrn-vf-no-producer-value",
@@ -203,31 +161,6 @@ def add_common_args(
         action="store_true",
         help="Value-file correlation: disable forwarding the last value "
         "from a self-bound cell (on by default).",
-    )
-    garfield.add_argument(
-        "--mrn-train-commit-value",
-        action="store_true",
-        help="Value forwarding: train confidence against the value "
-        "file as of commit "
-        "(the old behaviour) instead of the rename-time snapshot. On by "
-        "default the snapshot is used, so a changing recurrence stops "
-        "earning spurious confidence.",
-    )
-    garfield.add_argument(
-        "--mrn-alias-allow-stale",
-        action="store_true",
-        help="Producer aliasing: alias even when the store's data "
-        "register was "
-        "redefined between the located store's rename and the load's "
-        "(restores the pre-gate behaviour). Off by default: that case "
-        "measured 0-30%% correct versus 100%% when they agree.",
-    )
-    garfield.add_argument(
-        "--mrn-allow-nonint",
-        action="store_true",
-        help="Relax MRN's integer-only forwarding restriction. UNSAFE: "
-        "value forwarding uses a scalar, so forwarding a non-integer "
-        "(vector/FP) load will panic. Default off (integer loads only).",
     )
     return parser
 
@@ -257,18 +190,9 @@ def make_mrn(args):
     return MemRenamePredictor(
         confBits=args.mrn_conf_bits,
         confThreshold=args.mrn_conf_threshold,
-        storeTableEntries=args.mrn_store_entries,
-        loadTableEntries=args.mrn_load_entries,
-        enableValueForwarding=not args.mrn_no_value_forward,
         enableProducerAliasing=args.mrn_alias,
-        mrnCorrelation=args.mrn_correlation.replace("-", "_"),
-        predictIntLoadsOnly=not args.mrn_allow_nonint,
-        aliasRequireCurrentProducer=not args.mrn_alias_allow_stale,
-        trainOnRenameSnapshot=not args.mrn_train_commit_value,
         vfForwardProducerValue=not args.mrn_vf_no_producer_value,
         vfForwardLastValue=not args.mrn_vf_no_last_value,
-        valueForwardConfThreshold=args.mrn_value_conf_threshold,
-        valueForwardOnUnconsumed=args.mrn_value_on_unconsumed,
     )
 
 
@@ -284,19 +208,19 @@ def apply_core_knobs(cpu, args):
 
 
 def _mrn_banner(args):
-    """MRN banner fragment naming which paths and knobs are active."""
+    """MRN banner fragment naming the active consumption modes."""
     if not args.use_mrn:
         return "off"
-    paths = []
-    if not args.mrn_no_value_forward:
-        paths.append("value")
+    modes = []
     if args.mrn_alias:
-        paths.append("alias")
+        modes.append("alias")
+    if not args.mrn_vf_no_producer_value:
+        modes.append("producerValue")
+    if not args.mrn_vf_no_last_value:
+        modes.append("lastValue")
     return (
-        f"on ({'+'.join(paths) if paths else 'none'}) "
-        f"correlation={args.mrn_correlation} "
-        f"vfProducerValue={not args.mrn_vf_no_producer_value} "
-        f"vfLastValue={not args.mrn_vf_no_last_value}"
+        f"on ({'+'.join(modes) if modes else 'none'}) "
+        f"confThreshold={args.mrn_conf_threshold}"
     )
 
 

@@ -49,8 +49,7 @@ if env['CONF']['BUILD_ISA']:
     SimObject('IQUnit.py', sim_objects=['IQUnit'])
     SimObject('SMT.py',
         enums=['SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
-    SimObject('MemRenamePredictor.py', sim_objects=['MemRenamePredictor'],
-        enums=['MrnCorrelation'])
+    SimObject('MemRenamePredictor.py', sim_objects=['MemRenamePredictor'])
 
     Source('bac.cc')
     Source('commit.cc')
@@ -67,7 +66,6 @@ if env['CONF']['BUILD_ISA']:
     Source('lsq.cc')
     Source('lsq_unit.cc')
     Source('mem_dep_unit.cc')
-    Source('mem_rename_predictor.cc')
     Source('mem_rename_predictor_sim.cc')
     Source('mem_rename_valuefile.cc')
     Source('regfile.cc')
@@ -80,9 +78,6 @@ if env['CONF']['BUILD_ISA']:
     Source('thread_state.cc')
 
     GTest('ghost_policy.test', 'ghost_policy.test.cc', 'ghost_policy.cc')
-    GTest('mem_rename_predictor.test', 'mem_rename_predictor.test.cc',
-        'mem_rename_predictor.cc', 'mem_rename_valuefile.cc',
-        '../reg_class.cc', '../../sim/bufval.cc', with_tag('gem5 trace'))
     GTest('mem_rename_valuefile.test', 'mem_rename_valuefile.test.cc',
         'mem_rename_valuefile.cc', '../reg_class.cc', '../../base/debug.cc',
         '../../sim/bufval.cc')

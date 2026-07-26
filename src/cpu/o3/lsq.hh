@@ -771,12 +771,6 @@ class LSQ
     /** Returns the sequence number of the head of the store queue. */
     InstSeqNum getStoreHeadSeqNum(ThreadID tid);
 
-    /** Garfield MRN aliasing: the youngest in-flight store on this
-     * thread whose PC matches, or nullptr if none. Used at rename to resolve a
-     *  predicted producer store PC to its (still in-flight) dynamic store so
-     *  its data physreg can be aliased. */
-    DynInstPtr findYoungestStoreByPC(ThreadID tid, Addr pc);
-
     /** Garfield MRN aliasing: a producer physreg on this thread just
      * wrote back; drain any aliased loads deferred waiting on it. */
     void mrnProducerWroteBack(ThreadID tid, PhysRegIdPtr producer);

@@ -371,12 +371,6 @@ LSQ::getStoreHeadSeqNum(ThreadID tid)
     return thread.at(tid).getStoreHeadSeqNum();
 }
 
-DynInstPtr
-LSQ::findYoungestStoreByPC(ThreadID tid, Addr pc)
-{
-    return thread.at(tid).findYoungestStoreByPC(pc);
-}
-
 void
 LSQ::mrnProducerWroteBack(ThreadID tid, PhysRegIdPtr producer)
 {

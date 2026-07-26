@@ -150,6 +150,14 @@ def add_common_args(
         "priority.",
     )
     garfield.add_argument(
+        "--mrn-lv-stability-target",
+        type=int,
+        default=0,
+        help="Address-instability hysteresis: consecutive same-line "
+        "executes required to re-enable last-value forwarding after two "
+        "strikes (0 = gate disabled).",
+    )
+    garfield.add_argument(
         "--mrn-vf-no-producer-value",
         action="store_true",
         help="Value-file correlation: disable forwarding the producer "
@@ -193,6 +201,7 @@ def make_mrn(args):
         enableProducerAliasing=args.mrn_alias,
         vfForwardProducerValue=not args.mrn_vf_no_producer_value,
         vfForwardLastValue=not args.mrn_vf_no_last_value,
+        lvStabilityTarget=args.mrn_lv_stability_target,
     )
 
 

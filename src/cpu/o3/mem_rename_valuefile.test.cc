@@ -293,3 +293,144 @@ TEST(MrnValueFileTables, SameBindingProbeKeepsConfidence)
               MrnVfProbeResult::SameBinding);
     EXPECT_TRUE(t.loadRename(0x200).confident);
 }
+
+TEST(MrnValueFileTables, StoreWriteObservationLifecycle)
+{
+    MrnValueFileTables t(testConfig());
+    // Self-bind a load at 0x2000 and refill its cell.
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    ASSERT_TRUE(ref.valid());
+    // No store observed yet.
+    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
+    // A store to the line stamps the cell; only older-than-load counts.
+    EXPECT_TRUE(t.storeWriteProbe(0x2000, 50));
+    EXPECT_TRUE(t.cellStoreWrittenBefore(ref, 1000));
+    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 40));
+    // Oldest observation wins over a later one.
+    EXPECT_TRUE(t.storeWriteProbe(0x2000, 500));
+    EXPECT_TRUE(t.cellStoreWrittenBefore(ref, 60));
+    // Refill clears the observation.
+    ASSERT_TRUE(t.loadDataResolved(0x200, 8));
+    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
+}
+
+TEST(MrnValueFileTables, StoreWriteProbeDeadReferenceSafe)
+{
+    MrnValueFileTables t(testConfig()); // vfEntries = 4
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    // Steal every cell so the monitored cell's generation moves on.
+    for (int i = 0; i < 4; i++) {
+        t.storeRename(0x300 + 8 * i, fakeReg(20 + i), 100 + i, nullptr);
+    }
+    // Probe on the dead reference must not stamp and must self-clean.
+    EXPECT_FALSE(t.storeWriteProbe(0x2000, 50));
+    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
+}
+
+TEST(MrnValueFileTables, AddressChangeObservation)
+{
+    MrnValueFileTables t(testConfig());
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    ASSERT_TRUE(ref.valid());
+    EXPECT_FALSE(t.cellAddrChanged(ref)); // first instance: no change
+    t.loadAddrResolved(0x200, 0x2000);    // same line
+    EXPECT_FALSE(t.cellAddrChanged(ref));
+    t.loadAddrResolved(0x200, 0x3000); // different line
+    EXPECT_TRUE(t.cellAddrChanged(ref));
+    t.loadAddrResolved(0x200, 0x3000); // stable at the new line
+    EXPECT_FALSE(t.cellAddrChanged(ref));
+}
+
+TEST(MrnValueFileTables, StrikeHysteresisDisablesAndReenables)
+{
+    MrnVfConfig c = testConfig();
+    c.lvStabilityTarget = 3;
+    MrnValueFileTables t(c);
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    // Wrong at a STABLE address never strikes.
+    t.trainVerify(0x200, ref, false, /*addrChanged=*/false);
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+    // First addr-changed wrong: one strike, still enabled.
+    t.trainVerify(0x200, ref, false, /*addrChanged=*/true);
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+    // Second: sticky disable.
+    t.trainVerify(0x200, ref, false, /*addrChanged=*/true);
+    EXPECT_TRUE(t.lastStrikeDisabled());
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation);
+    // Corrects do NOT re-enable a disabled binding (no oscillation)...
+    for (int i = 0; i < 200; i++) {
+        t.trainVerify(0x200, ref, true);
+    }
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation);
+    // ...but sustained address stability at execute does.
+    t.loadAddrResolved(0x200, 0x2000); // establishes line, streak 1
+    t.loadAddrResolved(0x200, 0x2000); // streak 2
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation);
+    t.loadAddrResolved(0x200, 0x2000); // streak 3 -> re-enable
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+    // A line change while disabled resets the streak.
+    t.trainVerify(0x200, ref, false, true);
+    t.trainVerify(0x200, ref, false, true);
+    ASSERT_TRUE(t.loadRename(0x200).lvProbation);
+    t.loadAddrResolved(0x200, 0x2000);
+    t.loadAddrResolved(0x200, 0x3000); // change -> streak reset
+    t.loadAddrResolved(0x200, 0x3000);
+    t.loadAddrResolved(0x200, 0x3000);
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation); // only streak 2 at 0x3000
+    t.loadAddrResolved(0x200, 0x3000);
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+}
+
+TEST(MrnValueFileTables, StrikeHysteresisDisabledByDefault)
+{
+    MrnValueFileTables t(testConfig()); // lvStabilityTarget = 0
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    t.trainVerify(0x200, ref, false, true);
+    t.trainVerify(0x200, ref, false, true);
+    EXPECT_FALSE(t.lastStrikeDisabled());
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+}
+
+TEST(MrnValueFileTables, EarningBindingSurvivesBurstyStrikes)
+{
+    MrnVfConfig c = testConfig();
+    c.lvStabilityTarget = 3;
+    MrnValueFileTables t(c);
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    // Earn a long correct history (ratio >> 256 per wrong).
+    for (int i = 0; i < 600; i++) {
+        t.trainVerify(0x200, ref, true);
+    }
+    // A clustered burst of two address-changed wrongs must NOT disable:
+    // lifetime earning is 600 corrects / 2 wrongs >= 256.
+    t.trainVerify(0x200, ref, false, true);
+    t.trainVerify(0x200, ref, false, true);
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+    // A genuine churner (few corrects per wrong) still gets disabled.
+    ASSERT_EQ(t.loadAddrResolved(0x300, 0x9000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x300, 5));
+    MrnVfRef r2 = t.loadRename(0x300).ref;
+    for (int i = 0; i < 20; i++) {
+        t.trainVerify(0x300, r2, true);
+    }
+    t.trainVerify(0x300, r2, false, true);
+    t.trainVerify(0x300, r2, false, true);
+    EXPECT_TRUE(t.loadRename(0x300).lvProbation);
+}

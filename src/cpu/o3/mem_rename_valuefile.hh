@@ -68,6 +68,16 @@ struct MrnVfConfig
     unsigned confInc = 1;
     unsigned confDec = 1;
     bool resetConfOnMispredict = true;
+    /** Load-address monitor (store-write observation; probe-only). */
+    unsigned lmEntries = 4096;
+    unsigned lmAssoc = 4;
+    /** Address-instability hysteresis for last-value consumption: a
+     *  wrong forward whose address also changed earns a strike; at two
+     *  strikes last-value consumption is disabled for that PC (sticky --
+     *  no oscillation) until this many consecutive same-line executes
+     *  are observed (shadow training continues throughout). 0 disables
+     *  the gate entirely. */
+    unsigned lvStabilityTarget = 0;
 };
 
 /** Reference to a value-file cell: index + the generation observed when the
@@ -99,6 +109,9 @@ struct MrnVfCellRead
     InstSeqNum ptrSeq = 0;
     bool valueValid = false; // cell holds a value
     RegVal value = 0;
+    /** Last-value consumption suppressed by strike probation (shadow
+     *  training still runs; alias/producer-value unaffected). */
+    bool lvProbation = false;
     MrnVfRef ref; // valid iff bound
 };
 
@@ -144,14 +157,52 @@ class MrnValueFileTables
      *  self-bound (last-value); returns whether it wrote. */
     bool loadDataResolved(Addr loadPC, RegVal value);
 
+    /** Store-write observation (probe-only): a store's resolved address.
+     *  On a monitor hit, stamp the referenced cell's storeWriteSeq with
+     *  the program-order-oldest such store since the cell's last refill.
+     *  Returns whether the probe hit a live monitor entry. */
+    bool storeWriteProbe(Addr ea, InstSeqNum sn);
+
+    /** Whether a store program-order older than loadSeq has been observed
+     *  writing this cell's line since the cell's last refill. Used at the
+     *  verify site to classify last-value outcomes; gen-checked (a stale
+     *  reference reads false). */
+    bool cellStoreWrittenBefore(const MrnVfRef &ref, InstSeqNum loadSeq) const;
+
+    /** Whether this self-bound cell's load resolved to a different line
+     *  this instance than the previous one (address instability;
+     *  probe-only, gen-checked). */
+    bool cellAddrChanged(const MrnVfRef &ref) const;
+
     /** Confidence training at writeback (consumed or shadow). Trains only
      *  when the load's SLC entry is still bound to usedRef -- a rebind
      *  between rename and writeback discards the outcome. */
-    void trainVerify(Addr loadPC, const MrnVfRef &usedRef, bool correct);
+    void trainVerify(Addr loadPC, const MrnVfRef &usedRef, bool correct,
+                     bool addrChanged = false);
+
+    /** Whether the most recent trainVerify disabled the binding. */
+    bool
+    lastStrikeDisabled() const
+    {
+        return lastDisable;
+    }
 
   private:
     struct VfCell
     {
+        /** Program-order-oldest store observed writing this cell's line
+         *  since the last self-bound refill (0 = none observed). Written
+         *  by the load-address monitor probe; cleared by loadDataResolved.
+         *  Observation only -- never consulted by any forwarding
+         *  decision. */
+        InstSeqNum storeWriteSeq = 0;
+        /** Address-stability observation (probe-only): the line this
+         *  cell's load resolved to last instance, and whether the current
+         *  instance's line differs from it. Never consulted by any
+         *  forwarding decision. */
+        Addr lastLine = 0;
+        bool lineKnown = false;
+        bool addrChanged = false;
         uint64_t gen = 0;
         bool ptrValid = false;
         PhysRegIdPtr ptr = nullptr;
@@ -169,6 +220,18 @@ class MrnValueFileTables
         bool selfBound = false;
         bool valid = false;
         uint64_t lru = 0;
+        /** Address-instability strikes (wrong forward + changed line). */
+        uint8_t strikes = 0;
+        /** Correct verifies since the last strike decay (slow decay). */
+        uint8_t strikeDecayCtr = 0;
+        /** Lifetime last-value verify outcomes for the earning test:
+         *  a binding is only disabled if it earns fewer than
+         *  lvEarningRatio corrects per wrong (saturating). */
+        uint32_t lvCorrects = 0;
+        uint16_t lvWrongs = 0;
+        /** Consecutive same-line executes observed while disabled;
+         *  reaching the stability target re-enables last-value use. */
+        uint8_t stableStreak = 0;
     };
     struct ScEntry
     {
@@ -185,6 +248,22 @@ class MrnValueFileTables
     /** Allocate (LRU-evict within the set) a store/load-cache entry. */
     SlcEntry *slcAllocate(Addr pc);
     /** Find the store-cache entry for lineAddr, or nullptr on a miss. */
+    /** Load-address monitor entry: line -> the self-bound cell whose
+     *  last-value came from this line. Published by self-binding loads at
+     *  address resolution; probed by every store at address resolution.
+     *  Probe-only instrumentation: hits stamp the cell, nothing more. */
+    struct LmEntry
+    {
+        Addr tag = 0;
+        int vfIdx = -1;
+        uint64_t gen = 0;
+        bool valid = false;
+        uint64_t lru = 0;
+    };
+
+    LmEntry *lmFind(Addr lineAddr);
+    LmEntry *lmAllocate(Addr lineAddr);
+
     ScEntry *scFind(Addr lineAddr);
     /** Allocate (LRU-evict within the set) a store-cache entry. */
     ScEntry *scAllocate(Addr lineAddr);
@@ -207,14 +286,19 @@ class MrnValueFileTables
     }
 
     const unsigned slcSets, slcAssoc, scSets, scAssoc;
+    const unsigned lmSets, lmAssoc;
     const unsigned scGranularityLog2;
     const unsigned confBits, confThreshold, confInc, confDec;
     const bool resetConfOnMispredict;
     std::vector<VfCell> valueFile;
     std::vector<SlcEntry> storeLoadCache;
     std::vector<ScEntry> storeCache;
+    std::vector<LmEntry> loadMonitor;
     /** Monotonic counter used as the LRU timestamp for all structures. */
     uint64_t lruTick = 0;
+    const unsigned lvStabilityTarget;
+    /** Whether the most recent trainVerify disabled a binding. */
+    bool lastDisable = false;
 };
 
 } // namespace o3

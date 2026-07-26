@@ -818,6 +818,12 @@ Rename::renameInsts(ThreadID tid)
                                 vf_value_pending = true;
                                 vf_value_mode = DynInst::MrnVfProducerValue;
                             } else if (!cr.ptrValid && cr.valueValid &&
+                                       cr.lvProbation) {
+                                // Confident last-value binding on strike
+                                // probation: skip consumption; shadow
+                                // training below keeps the cell healthy.
+                                memRenamePred->vfNoteLvProbationSuppressed();
+                            } else if (!cr.ptrValid && cr.valueValid &&
                                        memRenamePred->vfForwardLastValue()) {
                                 vf_value = cr.value;
                                 vf_value_pending = true;

@@ -187,6 +187,12 @@ def parse_args():
     parser.add_argument("--warmup-insts", type=int, default=int(1e6))
     parser.add_argument("--detailed-insts", type=int, default=int(5e6))
     parser.add_argument("--progress-interval", type=str, default="0Hz")
+    parser.add_argument("--atomic-only", action="store_true",
+                        help="Restore-verify mode: run the ATOMIC core only "
+                             "(no switch, no detailed region) so long guest "
+                             "windows are affordable; exit at "
+                             "--atomic-max-insts committed instructions.")
+    parser.add_argument("--atomic-max-insts", type=int, default=int(30e9))
     # --- prefetcher / front-end ablation (identical to fs_run.py) --------
     parser.add_argument("--disable-fdp", action="store_true")
     parser.add_argument("--disable-l1d-prefetch", action="store_true")
@@ -263,7 +269,12 @@ def make_atomic_core():
     AtomicClass = SimpleCore.cpu_class_factory(
         cpu_type=CPUTypes.ATOMIC, isa=ISA.ARM
     )
-    return BaseCPUCore(core=AtomicClass(cpu_id=0), isa=ISA.ARM)
+    core = BaseCPUCore(core=AtomicClass(cpu_id=0), isa=ISA.ARM)
+    # Mirror make_neoverse_v2_core(): without this, --atomic-only runs (no
+    # detailed core ever active) print no heartbeat at all and a multi-hour
+    # restore is unobservable.
+    core.core.progress_interval = args.progress_interval
+    return core
 
 
 # ---- cache hierarchy (copied verbatim from fs_run.py -- keep in sync) ------
@@ -418,10 +429,14 @@ print(f"  dram     : {args.mem_type} @ {args.mem_size}")
 print(f"  mrn      : {'on (' + args.mrn_mode + ')' if args.use_mrn else 'off'}"
       f"  ghostExec={args.ghost_exec}")
 print(f"  restore  : {args.restore_dir}")
-print(
-    f"  region   : settle={max(1, args.settle_insts):,} "
-    f"warmup={args.warmup_insts:,} detailed={args.detailed_insts:,}"
-)
+if args.atomic_only:
+    print(f"  region   : ATOMIC-only max-insts={args.atomic_max_insts:,} "
+          "(no switch, no detailed)")
+else:
+    print(
+        f"  region   : settle={max(1, args.settle_insts):,} "
+        f"warmup={args.warmup_insts:,} detailed={args.detailed_insts:,}"
+    )
 
 
 # ---- run: restore(ATOMIC) -> switch(Neoverse V2) -> warmup -> detailed -----
@@ -433,6 +448,27 @@ def _stopper():
 simulator = Simulator(
     board=board, on_exit_event={ExitEvent.MAX_INSTS: _stopper()}
 )
+
+if args.atomic_only:
+    # Restore-verify short-circuit (mirrors --gen-ref's early return): run
+    # the ATOMIC settle core standalone for --atomic-max-insts committed
+    # instructions and stop there -- no switch to the detailed core, no
+    # warmup, no detailed region. This is what makes a whole guest
+    # workload (e.g. a DaCapo benchmark run to its own completion message)
+    # affordable: the detailed O3 core is far too slow for that horizon,
+    # but atomic is fast enough to let the guest print its own pass/fail
+    # verdict, which is the end-to-end correctness sign-off for a restored
+    # checkpoint.
+    print(f">>> instantiate + restore {args.restore_dir}; ATOMIC-only run "
+          f"{args.atomic_max_insts:,} insts (max) ...")
+    simulator.schedule_max_insts(args.atomic_max_insts)
+    simulator.run()
+    print(
+        f"Exiting @ tick {m5.curTick()} because "
+        f"{simulator.get_last_exit_event_cause()}."
+    )
+    print(f"Insts (ATOMIC)     : {simulator.get_instruction_count()}")
+    raise SystemExit(0)
 
 settle = max(1, args.settle_insts)
 print(f">>> instantiate + restore {args.restore_dir}; ATOMIC settle "

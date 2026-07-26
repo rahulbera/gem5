@@ -510,6 +510,13 @@ class MemRenamePredictor : public SimObject
         return _vfForwardLastValue;
     }
 
+    /** Run the value-snapshot path for bound-but-unconsumed loads too. */
+    bool
+    valueForwardOnUnconsumed() const
+    {
+        return _valueForwardOnUnconsumed;
+    }
+
     /** Per-mode index for the vfPredict* stat vectors. */
     enum VfMode
     {
@@ -696,6 +703,8 @@ class MemRenamePredictor : public SimObject
     const bool _vfForwardProducerValue;
     /** Value file: forward the last value from a self-bound cell. */
     const bool _vfForwardLastValue;
+    /** Value-snapshot path also serves bound-but-unconsumed loads. */
+    const bool _valueForwardOnUnconsumed;
 
     /** Training statistics (Garfield MRN). */
     struct MemRenameStats : public statistics::Group

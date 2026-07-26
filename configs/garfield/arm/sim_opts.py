@@ -179,6 +179,19 @@ def add_common_args(
         "at execution).",
     )
     garfield.add_argument(
+        "--mrn-value-conf-threshold",
+        type=int,
+        default=0,
+        help="Confidence threshold for the value-snapshot path; 0 "
+        "inherits --mrn-conf-threshold.",
+    )
+    garfield.add_argument(
+        "--mrn-value-on-unconsumed",
+        action="store_true",
+        help="Run the value-snapshot path also for loads whose "
+        "value-file binding made no consumed prediction.",
+    )
+    garfield.add_argument(
         "--mrn-vf-no-producer-value",
         action="store_true",
         help="Value-file correlation: disable forwarding the producer "
@@ -254,6 +267,8 @@ def make_mrn(args):
         trainOnRenameSnapshot=not args.mrn_train_commit_value,
         vfForwardProducerValue=not args.mrn_vf_no_producer_value,
         vfForwardLastValue=not args.mrn_vf_no_last_value,
+        valueForwardConfThreshold=args.mrn_value_conf_threshold,
+        valueForwardOnUnconsumed=args.mrn_value_on_unconsumed,
     )
 
 

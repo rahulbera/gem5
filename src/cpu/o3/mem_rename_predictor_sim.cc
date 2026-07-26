@@ -8,10 +8,12 @@ namespace o3
 
 MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
     : SimObject(p),
-      tables(MrnConfig{p.storeTableEntries, p.storeTableAssoc,
-                       p.loadTableEntries, p.loadTableAssoc,
-                       p.valueFileEntries, p.confBits, p.confThreshold,
-                       p.confInc, p.confDec, p.resetConfOnMispredict}),
+      tables(
+          MrnConfig{p.storeTableEntries, p.storeTableAssoc, p.loadTableEntries,
+                    p.loadTableAssoc, p.valueFileEntries, p.confBits,
+                    p.valueForwardConfThreshold ? p.valueForwardConfThreshold
+                                                : p.confThreshold,
+                    p.confInc, p.confDec, p.resetConfOnMispredict}),
       vfTables(MrnVfConfig{p.vfEntries, p.slcEntries, p.slcAssoc, p.scEntries,
                            p.scAssoc, p.scGranularityBytes, p.confBits,
                            p.confThreshold, p.confInc, p.confDec,
@@ -25,6 +27,7 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
       _useValueFile(p.mrnCorrelation == enums::value_file),
       _vfForwardProducerValue(p.vfForwardProducerValue),
       _vfForwardLastValue(p.vfForwardLastValue),
+      _valueForwardOnUnconsumed(p.valueForwardOnUnconsumed),
       stats(this)
 {}
 

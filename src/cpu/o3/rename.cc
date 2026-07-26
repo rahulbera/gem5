@@ -879,11 +879,17 @@ Rename::renameInsts(ThreadID tid)
                         }
                     }
                     // Single-writer rule: fall through to the old
-                    // value-snapshot path only when the model made no
-                    // binding at all for this load (never when it
-                    // aliased -- vf_alias implies cr.bound already, spelled
-                    // out here too so the invariant is not implicit).
-                    if (!cr.bound && !vf_alias &&
+                    // value-snapshot path only when the value-file model
+                    // consumed nothing for this load. By default that
+                    // additionally requires NO binding at all; with
+                    // valueForwardOnUnconsumed, bound-but-unconsumed
+                    // loads (dead channel, below confidence, or the
+                    // applicable mode disabled) also fall through, since
+                    // they would otherwise be served by neither path.
+                    const bool vf_consumed = vf_alias || vf_value_pending;
+                    if (!vf_consumed &&
+                        (!cr.bound ||
+                         memRenamePred->valueForwardOnUnconsumed()) &&
                         memRenamePred->valueForwardingEnabled()) {
                         mrnPred = memRenamePred->predict(load_pc);
                         const MrnPrediction snap =

@@ -80,6 +80,19 @@ class MemRenamePredictor(SimObject):
         "Forward a snapshotted value into a high-confidence load's renamed "
         "destination (the value path). Independent of producer aliasing.",
     )
+    valueForwardConfThreshold = Param.Unsigned(
+        0,
+        "Confidence threshold for the value-snapshot forwarding path; "
+        "0 inherits confThreshold. Lets the snapshot path run at a "
+        "different strictness than the value-file rendezvous tables.",
+    )
+    valueForwardOnUnconsumed = Param.Bool(
+        False,
+        "Run the value-snapshot path also for loads whose value-file "
+        "binding made no consumed prediction (dead-channel, below "
+        "confidence, or mode disabled). Default: only for loads with "
+        "no value-file binding at all.",
+    )
     enableProducerAliasing = Param.Bool(
         False,
         "Alias a load's renamed destination to an in-flight producing "

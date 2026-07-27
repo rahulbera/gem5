@@ -1286,10 +1286,6 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                     false, inst->memSrcLevel());
                                 mrn->vfNoteWrongFlushed(
                                     inst->memSrcLevel(), squashed);
-                                if (vf_lv) {
-                                    mrn->vfNoteLastValueAddrClass(false,
-                                                                  vf_ac);
-                                }
                                 mrn->vfTrainVerify(inst->pcState().instAddr(),
                                                    inst->mrnVfRef(), false,
                                                    vf_ac, squashed);
@@ -1313,9 +1309,6 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 mrn->vfNotePredictOutcome(vf_mode_index, true);
                                 mrn->vfNoteConsumedLevel(
                                     true, inst->memSrcLevel());
-                                if (vf_lv) {
-                                    mrn->vfNoteLastValueAddrClass(true, vf_ac);
-                                }
                                 mrn->vfTrainVerify(inst->pcState().instAddr(),
                                                    inst->mrnVfRef(), true,
                                                    vf_ac);

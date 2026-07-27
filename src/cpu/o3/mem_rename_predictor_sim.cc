@@ -104,18 +104,6 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(vfShadowSkipped, statistics::units::Count::get(),
                "Value-file shadow comparisons skipped because the "
                "producer value was not available"),
-      ADD_STAT(lvWrongAddrChanged, statistics::units::Count::get(),
-               "Wrong last-value forwards whose load resolved to a "
-               "different line than its previous instance (address "
-               "instability; what the stability gate strikes on)"),
-      ADD_STAT(lvWrongAddrSame, statistics::units::Count::get(),
-               "Wrong last-value forwards at the same line as the "
-               "previous instance (value oscillation)"),
-      ADD_STAT(lvCorrectAddrChanged, statistics::units::Count::get(),
-               "Correct last-value forwards despite a line change "
-               "(coincidental value match across addresses)"),
-      ADD_STAT(lvCorrectAddrSame, statistics::units::Count::get(),
-               "Correct last-value forwards at a stable line"),
       ADD_STAT(lvStrikes, statistics::units::Count::get(),
                "Second address-instability strikes that disabled a "
                "binding's last-value consumption (sticky, until "

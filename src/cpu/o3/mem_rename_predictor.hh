@@ -227,18 +227,6 @@ class MemRenamePredictor : public SimObject
         return vfTables.cellAddrChanged(ref);
     }
 
-    /** Split a last-value verify outcome by address stability -- the
-     *  signal the stability gate strikes on. */
-    void
-    vfNoteLastValueAddrClass(bool correct, bool changed)
-    {
-        if (correct) {
-            (changed ? stats.lvCorrectAddrChanged : stats.lvCorrectAddrSame)++;
-        } else {
-            (changed ? stats.lvWrongAddrChanged : stats.lvWrongAddrSame)++;
-        }
-    }
-
     /** A confident last-value consumption skipped due to probation. */
     void
     vfNoteLvProbationSuppressed()
@@ -470,13 +458,6 @@ class MemRenamePredictor : public SimObject
         /** Value file: shadow comparisons skipped because the producer
          *  value was not available. */
         statistics::Scalar vfShadowSkipped;
-        /** Last-value verify outcomes split by address stability -- the
-         *  signal the stability gate strikes on: did the load resolve to
-         *  a different line than its previous instance? */
-        statistics::Scalar lvWrongAddrChanged;
-        statistics::Scalar lvWrongAddrSame;
-        statistics::Scalar lvCorrectAddrChanged;
-        statistics::Scalar lvCorrectAddrSame;
         /** Address-instability strike probation (last-value gate). */
         statistics::Scalar lvStrikes;
         statistics::Scalar lvProbationSuppressed;

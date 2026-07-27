@@ -20,10 +20,6 @@ class MemRenamePredictor(SimObject):
     scEntries = Param.Unsigned(4096, "Store cache entries (address-indexed)")
     scAssoc = Param.Unsigned(4, "Store cache associativity")
     scGranularityBytes = Param.Unsigned(8, "Store cache line granularity")
-    lmEntries = Param.Unsigned(
-        4096, "Load-address monitor entries (store-write observation)"
-    )
-    lmAssoc = Param.Unsigned(4, "Load-address monitor associativity")
     lvStabilityTarget = Param.Unsigned(
         0,
         "Address-instability hysteresis for last-value forwarding: two "

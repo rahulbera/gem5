@@ -760,14 +760,6 @@ LSQUnit::executeStore(const DynInstPtr &store_inst)
                                      store_inst->physEffAddr,
                                      store_inst->seqNum);
         }
-        // Probe-only store-write observation: EVERY store with a resolved
-        // address probes the load-address monitor, including stores that
-        // never publish (non-integer data, pairs). Stamps cells; never
-        // affects a decision.
-        if (store_inst->effAddrValid()) {
-            mrn->vfStoreWriteProbe(store_inst->physEffAddr,
-                                   store_inst->seqNum);
-        }
     }
 
     return checkViolations(loadIt, store_inst);
@@ -1243,16 +1235,12 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                         inst->mrnVfMode() == DynInst::MrnVfProducerValue
                             ? MemRenamePredictor::VfModeProducerValue
                             : MemRenamePredictor::VfModeLastValue;
-                    // Probe-only: classify last-value outcomes by whether
-                    // an older store was observed writing the cell's line
-                    // since its last refill (store-write-invalidation
-                    // catchability study).
+                    // Address-instability input to the stability gate's
+                    // strike test: only a last-value consumption can
+                    // strike (alias/producer-value are never gated).
                     const bool vf_lv =
                         vf_consumed_value &&
                         inst->mrnVfMode() == DynInst::MrnVfLastValue;
-                    const bool vf_sw =
-                        vf_lv && mrn->vfCellStoreWritten(inst->mrnVfRef(),
-                                                         inst->seqNum);
                     const bool vf_ac =
                         vf_lv && mrn->vfCellAddrChanged(inst->mrnVfRef());
                     if (true_val != inst->mrnPredVal()) {
@@ -1274,8 +1262,6 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 mrn->vfNotePredictOutcome(vf_mode_index,
                                                           false);
                                 if (vf_lv) {
-                                    mrn->vfNoteLastValueStoreClass(false,
-                                                                   vf_sw);
                                     mrn->vfNoteLastValueAddrClass(false,
                                                                   vf_ac);
                                 }
@@ -1301,8 +1287,6 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                             if (vf_consumed_value) {
                                 mrn->vfNotePredictOutcome(vf_mode_index, true);
                                 if (vf_lv) {
-                                    mrn->vfNoteLastValueStoreClass(true,
-                                                                   vf_sw);
                                     mrn->vfNoteLastValueAddrClass(true, vf_ac);
                                 }
                                 mrn->vfTrainVerify(inst->pcState().instAddr(),

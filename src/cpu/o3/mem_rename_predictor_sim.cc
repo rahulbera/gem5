@@ -11,8 +11,7 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
       vfTables(MrnVfConfig{p.vfEntries, p.slcEntries, p.slcAssoc, p.scEntries,
                            p.scAssoc, p.scGranularityBytes, p.confBits,
                            p.confThreshold, p.confInc, p.confDec,
-                           p.resetConfOnMispredict, p.lmEntries, p.lmAssoc,
-                           p.lvStabilityTarget}),
+                           p.resetConfOnMispredict, p.lvStabilityTarget}),
       _enableProducerAliasing(p.enableProducerAliasing),
       _vfForwardProducerValue(p.vfForwardProducerValue),
       _vfForwardLastValue(p.vfForwardLastValue),
@@ -104,28 +103,10 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(vfShadowSkipped, statistics::units::Count::get(),
                "Value-file shadow comparisons skipped because the "
                "producer value was not available"),
-      ADD_STAT(lmStoreProbes, statistics::units::Count::get(),
-               "Store address resolutions that probed the load-address "
-               "monitor (probe-only observation)"),
-      ADD_STAT(lmStoreHits, statistics::units::Count::get(),
-               "Load-address monitor probes that hit a live self-bound "
-               "cell reference"),
-      ADD_STAT(lvWrongStoreWritten, statistics::units::Count::get(),
-               "Wrong last-value forwards with an observed older "
-               "store-write since the cell's last refill (catchable by "
-               "store-write invalidation)"),
-      ADD_STAT(lvWrongNoStore, statistics::units::Count::get(),
-               "Wrong last-value forwards with no observed store-write "
-               "(unreachable by store-write invalidation)"),
-      ADD_STAT(lvCorrectStoreWritten, statistics::units::Count::get(),
-               "Correct last-value forwards with an observed older "
-               "store-write (would-be collateral of invalidating)"),
-      ADD_STAT(lvCorrectNoStore, statistics::units::Count::get(),
-               "Correct last-value forwards with no observed store-write"),
       ADD_STAT(lvWrongAddrChanged, statistics::units::Count::get(),
                "Wrong last-value forwards whose load resolved to a "
                "different line than its previous instance (address "
-               "instability; admission-gate catchable)"),
+               "instability; what the stability gate strikes on)"),
       ADD_STAT(lvWrongAddrSame, statistics::units::Count::get(),
                "Wrong last-value forwards at the same line as the "
                "previous instance (value oscillation)"),

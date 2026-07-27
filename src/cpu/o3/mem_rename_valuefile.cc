@@ -44,8 +44,6 @@ MrnValueFileTables::MrnValueFileTables(const MrnVfConfig &cfg)
       scSets(numSets(cfg.scEntries, cfg.scAssoc)),
       scAssoc(atLeastOne(cfg.scAssoc)),
       scGranularityLog2(log2OfGranularity(cfg.scGranularityBytes)),
-      lmSets(numSets(cfg.lmEntries, cfg.lmAssoc)),
-      lmAssoc(atLeastOne(cfg.lmAssoc)),
       confBits(cfg.confBits),
       confThreshold(cfg.confThreshold),
       confInc(cfg.confInc),
@@ -54,7 +52,6 @@ MrnValueFileTables::MrnValueFileTables(const MrnVfConfig &cfg)
       valueFile(atLeastOne(cfg.vfEntries)),
       storeLoadCache(slcSets * slcAssoc),
       storeCache(scSets * scAssoc),
-      loadMonitor(lmSets * lmAssoc),
       lvStabilityTarget(cfg.lvStabilityTarget)
 {}
 
@@ -132,44 +129,6 @@ MrnValueFileTables::scAllocate(Addr lineAddr)
     victim->vfIdx = -1;
     victim->gen = 0;
     victim->storeSeq = 0;
-    return victim;
-}
-
-MrnValueFileTables::LmEntry *
-MrnValueFileTables::lmFind(Addr lineAddr)
-{
-    const unsigned set = static_cast<unsigned>(lineAddr % lmSets);
-    const unsigned firstWay = set * lmAssoc;
-    for (unsigned w = 0; w < lmAssoc; ++w) {
-        LmEntry &e = loadMonitor[firstWay + w];
-        if (e.valid && e.tag == lineAddr) {
-            return &e;
-        }
-    }
-    return nullptr;
-}
-
-MrnValueFileTables::LmEntry *
-MrnValueFileTables::lmAllocate(Addr lineAddr)
-{
-    const unsigned set = static_cast<unsigned>(lineAddr % lmSets);
-    const unsigned firstWay = set * lmAssoc;
-    LmEntry *victim = &loadMonitor[firstWay];
-    for (unsigned w = 0; w < lmAssoc; ++w) {
-        LmEntry &e = loadMonitor[firstWay + w];
-        if (!e.valid) {
-            victim = &e;
-            break;
-        }
-        if (e.lru < victim->lru) {
-            victim = &e;
-        }
-    }
-    victim->valid = true;
-    victim->tag = lineAddr;
-    victim->vfIdx = -1;
-    victim->gen = 0;
-    victim->lru = ++lruTick;
     return victim;
 }
 
@@ -330,13 +289,6 @@ MrnValueFileTables::loadAddrResolved(Addr loadPC, Addr ea)
         }
         cell.lastLine = line;
         cell.lineKnown = true;
-        LmEntry *lme = lmFind(scLine(ea));
-        if (!lme) {
-            lme = lmAllocate(scLine(ea));
-        }
-        lme->vfIdx = le->vfIdx;
-        lme->gen = le->gen;
-        lme->lru = ++lruTick;
         result.outcome = MrnVfProbeResult::AlreadySelfBound;
         return result;
     }
@@ -354,13 +306,6 @@ MrnValueFileTables::loadAddrResolved(Addr loadPC, Addr ea)
     fresh.lastLine = scLine(ea);
     fresh.lineKnown = true;
     fresh.addrChanged = false;
-    LmEntry *lme = lmFind(scLine(ea));
-    if (!lme) {
-        lme = lmAllocate(scLine(ea));
-    }
-    lme->vfIdx = idx;
-    lme->gen = valueFile[idx].gen;
-    lme->lru = ++lruTick;
     result.outcome = MrnVfProbeResult::SelfBound;
     return result;
 }
@@ -377,7 +322,6 @@ MrnValueFileTables::loadDataResolved(Addr loadPC, RegVal value)
     cell.value = value;
     cell.valueValid = true;
     cell.ptrValid = false;
-    cell.storeWriteSeq = 0;
     cell.lru = ++lruTick;
     return true;
 }
@@ -450,28 +394,6 @@ MrnValueFileTables::trainVerify(Addr loadPC, const MrnVfRef &usedRef,
 }
 
 bool
-MrnValueFileTables::storeWriteProbe(Addr ea, InstSeqNum sn)
-{
-    LmEntry *lme = lmFind(scLine(ea));
-    if (!lme || lme->vfIdx < 0) {
-        return false;
-    }
-    VfCell &cell = valueFile[lme->vfIdx];
-    if (cell.gen != lme->gen) {
-        // Dead reference: the cell moved on. Drop the monitor entry.
-        lme->valid = false;
-        return false;
-    }
-    // Keep the program-order-OLDEST observation since the last refill, so
-    // the verify-time "older than the load" test cannot miss an early
-    // writer behind a later one.
-    if (cell.storeWriteSeq == 0 || sn < cell.storeWriteSeq) {
-        cell.storeWriteSeq = sn;
-    }
-    return true;
-}
-
-bool
 MrnValueFileTables::cellAddrChanged(const MrnVfRef &ref) const
 {
     if (!ref.valid() || ref.idx >= static_cast<int>(valueFile.size())) {
@@ -479,20 +401,6 @@ MrnValueFileTables::cellAddrChanged(const MrnVfRef &ref) const
     }
     const VfCell &cell = valueFile[ref.idx];
     return cell.gen == ref.gen && cell.addrChanged;
-}
-
-bool
-MrnValueFileTables::cellStoreWrittenBefore(const MrnVfRef &ref,
-                                           InstSeqNum loadSeq) const
-{
-    if (!ref.valid() || ref.idx >= static_cast<int>(valueFile.size())) {
-        return false;
-    }
-    const VfCell &cell = valueFile[ref.idx];
-    if (cell.gen != ref.gen || cell.storeWriteSeq == 0) {
-        return false;
-    }
-    return cell.storeWriteSeq < loadSeq;
 }
 
 } // namespace o3

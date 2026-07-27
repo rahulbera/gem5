@@ -218,36 +218,17 @@ class MemRenamePredictor : public SimObject
     {
         vfTables.loadDataResolved(pc, v);
     }
-    /** Probe-only store-write observation: every store's resolved address
-     *  probes the load-address monitor; hits stamp the referenced cell.
-     *  Never influences any forwarding decision. */
-    void
-    vfStoreWriteProbe(Addr ea, InstSeqNum sn)
-    {
-        if (vfTables.storeWriteProbe(ea, sn)) {
-            stats.lmStoreHits++;
-        }
-        stats.lmStoreProbes++;
-    }
-
-    /** Verify-site classifier: was a program-order-older store observed
-     *  writing this cell's line since its last refill? */
-    bool
-    vfCellStoreWritten(const MrnVfRef &ref, InstSeqNum loadSeq) const
-    {
-        return vfTables.cellStoreWrittenBefore(ref, loadSeq);
-    }
-
-    /** Classify a last-value verify outcome by store-write observation:
-     *  wrong+written = catchable by store-write invalidation;
-     *  correct+written = would-be collateral of invalidating. */
-    /** Verify-site classifier: address-instability split. */
+    /** Verify site: did the load's line change since its previous
+     *  instance? The address-instability input to the stability gate's
+     *  strike test (vfTrainVerify). */
     bool
     vfCellAddrChanged(const MrnVfRef &ref) const
     {
         return vfTables.cellAddrChanged(ref);
     }
 
+    /** Split a last-value verify outcome by address stability -- the
+     *  signal the stability gate strikes on. */
     void
     vfNoteLastValueAddrClass(bool correct, bool changed)
     {
@@ -263,16 +244,6 @@ class MemRenamePredictor : public SimObject
     vfNoteLvProbationSuppressed()
     {
         stats.lvProbationSuppressed++;
-    }
-
-    void
-    vfNoteLastValueStoreClass(bool correct, bool written)
-    {
-        if (correct) {
-            (written ? stats.lvCorrectStoreWritten : stats.lvCorrectNoStore)++;
-        } else {
-            (written ? stats.lvWrongStoreWritten : stats.lvWrongNoStore)++;
-        }
     }
 
     /** Value file (writeback): train the bound cell's confidence counter
@@ -466,18 +437,9 @@ class MemRenamePredictor : public SimObject
         /** Value file: shadow comparisons skipped because the producer
          *  value was not available. */
         statistics::Scalar vfShadowSkipped;
-        /** Load-address monitor (probe-only store-write observation). */
-        statistics::Scalar lmStoreProbes;
-        statistics::Scalar lmStoreHits;
-        /** Last-value verify outcomes split by prior store-write
-         *  observation: wrong+written is the store-write-invalidation
-         *  catchable ceiling; correct+written its would-be collateral. */
-        statistics::Scalar lvWrongStoreWritten;
-        statistics::Scalar lvWrongNoStore;
-        statistics::Scalar lvCorrectStoreWritten;
-        statistics::Scalar lvCorrectNoStore;
-        /** Last-value verify outcomes split by address stability: did the
-         *  load resolve to a different line than its previous instance? */
+        /** Last-value verify outcomes split by address stability -- the
+         *  signal the stability gate strikes on: did the load resolve to
+         *  a different line than its previous instance? */
         statistics::Scalar lvWrongAddrChanged;
         statistics::Scalar lvWrongAddrSame;
         statistics::Scalar lvCorrectAddrChanged;

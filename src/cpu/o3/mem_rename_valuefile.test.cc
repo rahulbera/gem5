@@ -294,44 +294,6 @@ TEST(MrnValueFileTables, SameBindingProbeKeepsConfidence)
     EXPECT_TRUE(t.loadRename(0x200).confident);
 }
 
-TEST(MrnValueFileTables, StoreWriteObservationLifecycle)
-{
-    MrnValueFileTables t(testConfig());
-    // Self-bind a load at 0x2000 and refill its cell.
-    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
-              MrnVfProbeResult::SelfBound);
-    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
-    MrnVfRef ref = t.loadRename(0x200).ref;
-    ASSERT_TRUE(ref.valid());
-    // No store observed yet.
-    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
-    // A store to the line stamps the cell; only older-than-load counts.
-    EXPECT_TRUE(t.storeWriteProbe(0x2000, 50));
-    EXPECT_TRUE(t.cellStoreWrittenBefore(ref, 1000));
-    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 40));
-    // Oldest observation wins over a later one.
-    EXPECT_TRUE(t.storeWriteProbe(0x2000, 500));
-    EXPECT_TRUE(t.cellStoreWrittenBefore(ref, 60));
-    // Refill clears the observation.
-    ASSERT_TRUE(t.loadDataResolved(0x200, 8));
-    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
-}
-
-TEST(MrnValueFileTables, StoreWriteProbeDeadReferenceSafe)
-{
-    MrnValueFileTables t(testConfig()); // vfEntries = 4
-    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
-              MrnVfProbeResult::SelfBound);
-    MrnVfRef ref = t.loadRename(0x200).ref;
-    // Steal every cell so the monitored cell's generation moves on.
-    for (int i = 0; i < 4; i++) {
-        t.storeRename(0x300 + 8 * i, fakeReg(20 + i), 100 + i, nullptr);
-    }
-    // Probe on the dead reference must not stamp and must self-clean.
-    EXPECT_FALSE(t.storeWriteProbe(0x2000, 50));
-    EXPECT_FALSE(t.cellStoreWrittenBefore(ref, 1000));
-}
-
 TEST(MrnValueFileTables, AddressChangeObservation)
 {
     MrnValueFileTables t(testConfig());

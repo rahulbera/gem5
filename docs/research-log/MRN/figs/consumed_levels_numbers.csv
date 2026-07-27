@@ -1,0 +1,13 @@
+"row","level","count","share"
+"all loads","STLF",4833633,0.026161
+"all loads","L1D",174084855,0.942197
+"all loads","L2",4574598,0.024759
+"all loads","Mem",1271640,0.006882
+"consumed forwards (correct)","STLF",2199243,0.037002
+"consumed forwards (correct)","L1D",55774786,0.938401
+"consumed forwards (correct)","L2",1124339,0.018917
+"consumed forwards (correct)","Mem",337646,0.005681
+"consumed forwards (wrong)","STLF",1311,0.004903
+"consumed forwards (wrong)","L1D",227888,0.852319
+"consumed forwards (wrong)","L2",35022,0.130985
+"consumed forwards (wrong)","Mem",3153,0.011792

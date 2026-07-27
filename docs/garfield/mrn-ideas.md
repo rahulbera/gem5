@@ -5,6 +5,15 @@ don't get lost between sessions. Newest evidence at the bottom of each entry.
 
 Baseline for all numbers: 10M warmup + 50M detailed, Neoverse V2 FS restore.
 
+**CHAPTER CLOSED (2026-07-28).** The MRN configuration is finalized:
+`--use-mrn --mrn-alias --mrn-conf-threshold 14`, all gates off (defaults).
+Suite geomean 1.0092 over 190 checkpoints. Cost-side criticality
+(flush-weighted penalization) is closed with a measured impossibility —
+see `docs/research-log/MRN/2026-07-28-cost-side-criticality-closure.md`
+and the two prior reports there. The open avenue (benefit-side
+schedule-criticality) is a new project, not an MRN tuning item. Do not
+reopen the entries below without that research-log context.
+
 **Fleet status (190-checkpoint sweep, current branch = 1a + alias gate):**
 geomean speedup **1.0001**, mean coverage 6.22%, verified accuracy 92.0%.
 61/190 checkpoints beat 1.0; spread 0.928-1.358. This is up from **0.985**

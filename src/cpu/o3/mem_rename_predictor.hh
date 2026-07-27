@@ -246,6 +246,34 @@ class MemRenamePredictor : public SimObject
         stats.lvProbationSuppressed++;
     }
 
+    /** Memory-system level (DynInst::MemSrcLevel: stlf / l1d / l2 / mem)
+     *  that served a completed load -- the reference distribution every
+     *  consumed-forward split is compared against. */
+    void
+    noteLoadLevel(unsigned lvl)
+    {
+        stats.loadLevelAll[lvl > 4 ? 4 : lvl]++;
+    }
+
+    /** Same level attribution for a consumed MRN forward (alias,
+     *  producer-value, or last-value), split by verify outcome. */
+    void
+    vfNoteConsumedLevel(bool correct, unsigned lvl)
+    {
+        (correct ? stats.vfConsumedLevelCorrect
+                 : stats.vfConsumedLevelWrong)[lvl > 4 ? 4 : lvl]++;
+    }
+
+    /** Flushed-instruction cost of a wrong consumed forward, accumulated
+     *  by the level that served the load. Divided by vfConsumedLevelWrong
+     *  this gives the average flush per wrong by level; summed over
+     *  levels it equals squashedInsts (same squash, same sites). */
+    void
+    vfNoteWrongFlushed(unsigned lvl, uint64_t flushed)
+    {
+        stats.vfWrongFlushedByLevel[lvl > 4 ? 4 : lvl] += flushed;
+    }
+
     /** Value file (writeback): train the bound cell's confidence counter
      *  against the verified outcome. */
     void
@@ -447,6 +475,16 @@ class MemRenamePredictor : public SimObject
         /** Address-instability strike probation (last-value gate). */
         statistics::Scalar lvStrikes;
         statistics::Scalar lvProbationSuppressed;
+        /** Memory-system level that served a load's data (subnames
+         *  stlf/l1d/l2/mem/unknown): every completed load, and consumed
+         *  MRN forwards split by verify outcome. */
+        statistics::Vector loadLevelAll;
+        statistics::Vector vfConsumedLevelCorrect;
+        statistics::Vector vfConsumedLevelWrong;
+        /** Flushed instructions charged to wrong consumed forwards,
+         *  accumulated by serving level (avg flush per wrong by level =
+         *  this / vfConsumedLevelWrong). */
+        statistics::Vector vfWrongFlushedByLevel;
 
     } stats;
 };

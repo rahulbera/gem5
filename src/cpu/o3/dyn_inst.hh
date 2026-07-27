@@ -542,6 +542,30 @@ class DynInst : public ExecContext, public RefCounted
         _mrnVfMode = m;
     }
 
+    /** Garfield: which level of the memory system served this load's
+     *  data. Stamped MemSrcStlf at store-to-load forwarding (the access
+     *  never reaches the caches); otherwise derived at writeback from
+     *  the request's cache-miss depth (0 = L1D hit, 1 = L2 hit,
+     *  >= 2 = memory). MemSrcUnknown until the load writes back. */
+    enum MemSrcLevel : uint8_t
+    {
+        MemSrcStlf = 0,
+        MemSrcL1D,
+        MemSrcL2,
+        MemSrcMem,
+        MemSrcUnknown
+    };
+    uint8_t
+    memSrcLevel() const
+    {
+        return _memSrcLevel;
+    }
+    void
+    setMemSrcLevel(uint8_t l)
+    {
+        _memSrcLevel = l;
+    }
+
     /** Garfield value-file rendezvous: this load passed the participation
      *  guards at rename (single integer destination) and is eligible for
      *  value-file lookup and confidence training, independent of whether a
@@ -1232,6 +1256,10 @@ class DynInst : public ExecContext, public RefCounted
      *  instruction's value-file interaction took; MrnVfNone if the model
      *  made no binding for it. */
     uint8_t _mrnVfMode = MrnVfNone;
+
+    /** Garfield: memory-system level that served this load (MemSrcLevel).
+     *  See memSrcLevel(). */
+    uint8_t _memSrcLevel = MemSrcUnknown;
 
     /** Garfield value-file rendezvous: snapshotted value for a
      *  below-confidence shadow prediction (MrnVfShadowValue). See

@@ -1156,9 +1156,30 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
     if (!inst->isExecuted()) {
         inst->setExecuted();
 
+        // Garfield: attribute the memory-system level that served this
+        // load. Store-to-load-forwarded loads were stamped at the forward
+        // site; for cache-served loads the request's accumulated miss
+        // depth identifies the level (0 = L1D hit, 1 = L2 hit, >= 2 =
+        // memory). A secondary miss coalesced into an in-flight MSHR
+        // keeps only its own descent depth, so a secondary behind a
+        // memory fetch counts as L2 -- the L2/memory split slightly
+        // understates memory.
+        if (inst->isLoad() &&
+            inst->memSrcLevel() == DynInst::MemSrcUnknown) {
+            const int depth = pkt->req->getAccessDepth();
+            inst->setMemSrcLevel(depth <= 0   ? DynInst::MemSrcL1D
+                                 : depth == 1 ? DynInst::MemSrcL2
+                                              : DynInst::MemSrcMem);
+        }
+
         if (inst->fault == NoFault) {
             // Complete access to copy data to proper place.
             inst->completeAcc(pkt);
+
+            if (MemRenamePredictor *mrn = iewStage->getMemRenamePred();
+                mrn && inst->isLoad()) {
+                mrn->noteLoadLevel(inst->memSrcLevel());
+            }
 
             // Garfield value-file rendezvous: load data resolved (the
             // load-data event, design doc §4) plus shadow
@@ -1261,6 +1282,10 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                             if (vf_consumed_value) {
                                 mrn->vfNotePredictOutcome(vf_mode_index,
                                                           false);
+                                mrn->vfNoteConsumedLevel(
+                                    false, inst->memSrcLevel());
+                                mrn->vfNoteWrongFlushed(
+                                    inst->memSrcLevel(), squashed);
                                 if (vf_lv) {
                                     mrn->vfNoteLastValueAddrClass(false,
                                                                   vf_ac);
@@ -1286,6 +1311,8 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                             mrn->noteCorrect();
                             if (vf_consumed_value) {
                                 mrn->vfNotePredictOutcome(vf_mode_index, true);
+                                mrn->vfNoteConsumedLevel(
+                                    true, inst->memSrcLevel());
                                 if (vf_lv) {
                                     mrn->vfNoteLastValueAddrClass(true, vf_ac);
                                 }
@@ -1720,6 +1747,10 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                     load_entry.setRequest(nullptr);
                 }
 
+                // Garfield: this load's data never reaches the caches --
+                // attribute it to store-to-load forwarding, not L1D.
+                load_inst->setMemSrcLevel(DynInst::MemSrcStlf);
+
                 WritebackEvent *wb = new WritebackEvent(load_inst, data_pkt,
                         this);
 
@@ -1891,6 +1922,8 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
             if (load->mrnVfMode() == DynInst::MrnVfAlias) {
                 mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,
                                           false);
+                mrn->vfNoteConsumedLevel(false, load->memSrcLevel());
+                mrn->vfNoteWrongFlushed(load->memSrcLevel(), squashed);
                 mrn->vfTrainVerify(load->pcState().instAddr(),
                                    load->mrnVfRef(), false);
             }
@@ -1909,6 +1942,7 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
             if (load->mrnVfMode() == DynInst::MrnVfAlias) {
                 mrn->vfNotePredictOutcome(MemRenamePredictor::VfModeAlias,
                                           true);
+                mrn->vfNoteConsumedLevel(true, load->memSrcLevel());
                 mrn->vfTrainVerify(load->pcState().instAddr(),
                                    load->mrnVfRef(), true);
             }

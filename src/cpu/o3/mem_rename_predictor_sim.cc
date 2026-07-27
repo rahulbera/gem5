@@ -121,7 +121,23 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "sustained address stability)"),
       ADD_STAT(lvProbationSuppressed, statistics::units::Count::get(),
                "Confident last-value consumptions skipped while their "
-               "binding was disabled by strikes")
+               "binding was disabled by strikes"),
+      ADD_STAT(loadLevelAll, statistics::units::Count::get(),
+               "Memory-system level that served each completed load "
+               "(stlf = store-to-load forward, never reached the caches; "
+               "l2/mem from the request's own miss depth, so MSHR-"
+               "coalesced secondaries behind a memory fetch count as l2)"),
+      ADD_STAT(vfConsumedLevelCorrect, statistics::units::Count::get(),
+               "Memory-system level that served each correct consumed "
+               "MRN forward (same attribution as loadLevelAll)"),
+      ADD_STAT(vfConsumedLevelWrong, statistics::units::Count::get(),
+               "Memory-system level that served each wrong consumed "
+               "MRN forward (same attribution as loadLevelAll)"),
+      ADD_STAT(vfWrongFlushedByLevel, statistics::units::Count::get(),
+               "Instructions flushed by wrong consumed forwards, "
+               "accumulated by the level that served the load (divide "
+               "by vfConsumedLevelWrong for avg flush per wrong; sums "
+               "to squashedInsts)")
 {
     const int num_reasons = static_cast<int>(MrnSquashReason::Num);
 
@@ -131,6 +147,19 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
     for (int i = 0; i < num_reasons; i++) {
         predictionsSquashedValue.subname(i, mrnSquashReasonNames[i]);
         predictionsSquashedAlias.subname(i, mrnSquashReasonNames[i]);
+    }
+
+    static const char *level_names[] = {"stlf", "l1d", "l2", "mem",
+                                        "unknown"};
+    loadLevelAll.init(5).flags(statistics::total);
+    vfConsumedLevelCorrect.init(5).flags(statistics::total);
+    vfConsumedLevelWrong.init(5).flags(statistics::total);
+    vfWrongFlushedByLevel.init(5).flags(statistics::total);
+    for (int i = 0; i < 5; i++) {
+        loadLevelAll.subname(i, level_names[i]);
+        vfConsumedLevelCorrect.subname(i, level_names[i]);
+        vfConsumedLevelWrong.subname(i, level_names[i]);
+        vfWrongFlushedByLevel.subname(i, level_names[i]);
     }
 
     static const char *vf_mode_names[] = {"alias", "producerValue",

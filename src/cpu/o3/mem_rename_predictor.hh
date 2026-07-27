@@ -275,14 +275,19 @@ class MemRenamePredictor : public SimObject
     }
 
     /** Value file (writeback): train the bound cell's confidence counter
-     *  against the verified outcome. */
+     *  against the verified outcome. flushed is the measured squash cost
+     *  of a wrong consumed forward (0 elsewhere); it feeds the
+     *  flush-weighted ledger. */
     void
     vfTrainVerify(Addr pc, const MrnVfRef &ref, bool correct,
-                  bool addrChanged = false)
+                  bool addrChanged = false, uint64_t flushed = 0)
     {
-        vfTables.trainVerify(pc, ref, correct, addrChanged);
+        vfTables.trainVerify(pc, ref, correct, addrChanged, flushed);
         if (vfTables.lastStrikeDisabled()) {
             stats.lvStrikes++;
+        }
+        if (vfTables.lastStrikeSpared()) {
+            stats.lvEarningSpared++;
         }
     }
 
@@ -475,6 +480,9 @@ class MemRenamePredictor : public SimObject
         /** Address-instability strike probation (last-value gate). */
         statistics::Scalar lvStrikes;
         statistics::Scalar lvProbationSuppressed;
+        /** Second strikes held by the earning/ledger test (bindings
+         *  that would otherwise have been disabled). */
+        statistics::Scalar lvEarningSpared;
         /** Memory-system level that served a load's data (subnames
          *  stlf/l1d/l2/mem/unknown): every completed load, and consumed
          *  MRN forwards split by verify outcome. */

@@ -366,6 +366,74 @@ TEST(MrnValueFileTables, StrikeHysteresisDisabledByDefault)
     EXPECT_FALSE(t.loadRename(0x200).lvProbation);
 }
 
+TEST(MrnValueFileTables, LedgerSparesCheapWrongEarner)
+{
+    // A binding whose corrects-per-wrong ratio FAILS the count-based
+    // earning test (200/2 = 100 < 256) is spared by the flush ledger
+    // when its wrongs are cheap: 200 corrects x b=1 >= 2 x 50 flushed.
+    MrnVfConfig c = testConfig();
+    c.lvStabilityTarget = 3;
+    c.lvFlushLedger = true;
+    c.lvBenefitPerCorrect = 1.0;
+    MrnValueFileTables t(c);
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    for (int i = 0; i < 200; i++) {
+        t.trainVerify(0x200, ref, true);
+    }
+    t.trainVerify(0x200, ref, false, true, 50);
+    t.trainVerify(0x200, ref, false, true, 50);
+    EXPECT_TRUE(t.lastStrikeSpared());
+    EXPECT_FALSE(t.loadRename(0x200).lvProbation);
+}
+
+TEST(MrnValueFileTables, LedgerDisablesExpensiveWrongs)
+{
+    // The same 200-correct binding is disabled when its two wrongs are
+    // expensive; oversized flush counts clamp to 511 per instance, so
+    // the debit is 2 x 511 = 1022 > 200 x b=1.
+    MrnVfConfig c = testConfig();
+    c.lvStabilityTarget = 3;
+    c.lvFlushLedger = true;
+    c.lvBenefitPerCorrect = 1.0;
+    MrnValueFileTables t(c);
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    for (int i = 0; i < 200; i++) {
+        t.trainVerify(0x200, ref, true);
+    }
+    t.trainVerify(0x200, ref, false, true, 10000);
+    t.trainVerify(0x200, ref, false, true, 10000);
+    EXPECT_FALSE(t.lastStrikeSpared());
+    EXPECT_TRUE(t.lastStrikeDisabled());
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation);
+}
+
+TEST(MrnValueFileTables, LedgerOffKeepsCountBasedEarning)
+{
+    // With the ledger off, the identical cheap-wrong scenario from
+    // LedgerSparesCheapWrongEarner is judged by the count test and
+    // disabled (200/2 = 100 < 256) -- the knob is the only delta.
+    MrnVfConfig c = testConfig();
+    c.lvStabilityTarget = 3;
+    MrnValueFileTables t(c);
+    ASSERT_EQ(t.loadAddrResolved(0x200, 0x2000).outcome,
+              MrnVfProbeResult::SelfBound);
+    ASSERT_TRUE(t.loadDataResolved(0x200, 7));
+    MrnVfRef ref = t.loadRename(0x200).ref;
+    for (int i = 0; i < 200; i++) {
+        t.trainVerify(0x200, ref, true);
+    }
+    t.trainVerify(0x200, ref, false, true, 50);
+    t.trainVerify(0x200, ref, false, true, 50);
+    EXPECT_FALSE(t.lastStrikeSpared());
+    EXPECT_TRUE(t.loadRename(0x200).lvProbation);
+}
+
 TEST(MrnValueFileTables, EarningBindingSurvivesBurstyStrikes)
 {
     MrnVfConfig c = testConfig();

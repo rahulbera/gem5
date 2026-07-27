@@ -52,7 +52,9 @@ MrnValueFileTables::MrnValueFileTables(const MrnVfConfig &cfg)
       valueFile(atLeastOne(cfg.vfEntries)),
       storeLoadCache(slcSets * slcAssoc),
       storeCache(scSets * scAssoc),
-      lvStabilityTarget(cfg.lvStabilityTarget)
+      lvStabilityTarget(cfg.lvStabilityTarget),
+      lvFlushLedger(cfg.lvFlushLedger),
+      lvBenefitPerCorrect(cfg.lvBenefitPerCorrect)
 {}
 
 MrnValueFileTables::SlcEntry *
@@ -328,9 +330,11 @@ MrnValueFileTables::loadDataResolved(Addr loadPC, RegVal value)
 
 void
 MrnValueFileTables::trainVerify(Addr loadPC, const MrnVfRef &usedRef,
-                                bool correct, bool addrChanged)
+                                bool correct, bool addrChanged,
+                                uint64_t flushed)
 {
     lastDisable = false;
+    lastSpare = false;
     SlcEntry *le = slcFind(loadPC);
     if (!le || le->vfIdx != usedRef.idx || le->gen != usedRef.gen) {
         return;
@@ -374,6 +378,15 @@ MrnValueFileTables::trainVerify(Addr loadPC, const MrnVfRef &usedRef,
         if (le->lvWrongs < 0xffffu) {
             le->lvWrongs++;
         }
+        // Ledger debit: charge this wrong's measured squash cost,
+        // clamped per instance so one full-ROB outlier cannot bankrupt
+        // a young binding (511 covers the measured memory-served
+        // average of ~300 with headroom).
+        const uint32_t charge =
+            static_cast<uint32_t>(flushed > 511 ? 511 : flushed);
+        le->lvFlushCost = (le->lvFlushCost > 0xffffffffu - charge)
+                              ? 0xffffffffu
+                              : le->lvFlushCost + charge;
         if (le->strikes < 2) {
             le->strikes++;
         }
@@ -384,10 +397,21 @@ MrnValueFileTables::trainVerify(Addr loadPC, const MrnVfRef &usedRef,
         // tolerant, value-stable) must not tear down a schedule-critical
         // forwarding channel; a churner earning ~a hundred or less gets
         // disabled until its address stabilizes.
-        const bool earns =
-            le->lvWrongs >= 2 && (le->lvCorrects / le->lvWrongs) >= 256;
+        // In flush-ledger mode the test is cost-denominated instead of
+        // count-denominated: spared while the lifetime benefit
+        // (corrects x benefit-per-correct) covers the accumulated flush
+        // cost, so a cheap-wrong (L1D-verified) binding is judged
+        // proportionally more gently than an expensive-wrong
+        // (L2/memory-verified) one.
+        const bool earns = le->lvWrongs >= 2 &&
+            (lvFlushLedger
+                 ? static_cast<double>(le->lvCorrects) *
+                           lvBenefitPerCorrect >=
+                       static_cast<double>(le->lvFlushCost)
+                 : (le->lvCorrects / le->lvWrongs) >= 256);
         if (earns && le->strikes >= 2) {
             le->strikes = 1; // hold one strike; do not disable
+            lastSpare = true;
         }
         lastDisable = (le->strikes >= 2);
     }

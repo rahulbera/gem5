@@ -158,6 +158,20 @@ def add_common_args(
         "strikes (0 = gate disabled).",
     )
     garfield.add_argument(
+        "--mrn-lv-flush-ledger",
+        action="store_true",
+        help="Replace the stability gate's count-based earning test "
+        "with the flush-weighted ledger (spared while corrects x "
+        "benefit-per-correct covers accumulated measured flush cost).",
+    )
+    garfield.add_argument(
+        "--mrn-lv-benefit-per-correct",
+        type=float,
+        default=1.0,
+        help="Ledger benefit credited per correct verify, in "
+        "flushed-instruction equivalents.",
+    )
+    garfield.add_argument(
         "--mrn-vf-no-producer-value",
         action="store_true",
         help="Value-file correlation: disable forwarding the producer "
@@ -202,6 +216,8 @@ def make_mrn(args):
         vfForwardProducerValue=not args.mrn_vf_no_producer_value,
         vfForwardLastValue=not args.mrn_vf_no_last_value,
         lvStabilityTarget=args.mrn_lv_stability_target,
+        lvFlushLedger=args.mrn_lv_flush_ledger,
+        lvBenefitPerCorrect=args.mrn_lv_benefit_per_correct,
     )
 
 

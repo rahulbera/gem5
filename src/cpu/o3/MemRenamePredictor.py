@@ -27,6 +27,18 @@ class MemRenamePredictor(SimObject):
         "consumption for that PC until this many consecutive same-line "
         "executes are observed (0 = gate disabled).",
     )
+    lvFlushLedger = Param.Bool(
+        False,
+        "Replace the stability gate's count-based earning test with a "
+        "flush-weighted ledger: a binding is spared from disabling while "
+        "corrects x lvBenefitPerCorrect covers the accumulated measured "
+        "flush cost of its address-changed wrongs.",
+    )
+    lvBenefitPerCorrect = Param.Float(
+        1.0,
+        "Ledger benefit credited per correct verify, in "
+        "flushed-instruction equivalents.",
+    )
 
     # Confidence (per-load, in the store/load cache entry).
     confBits = Param.Unsigned(4, "Confidence counter width in bits")

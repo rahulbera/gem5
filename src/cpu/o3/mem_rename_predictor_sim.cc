@@ -11,7 +11,8 @@ MemRenamePredictor::MemRenamePredictor(const MemRenamePredictorParams &p)
       vfTables(MrnVfConfig{p.vfEntries, p.slcEntries, p.slcAssoc, p.scEntries,
                            p.scAssoc, p.scGranularityBytes, p.confBits,
                            p.confThreshold, p.confInc, p.confDec,
-                           p.resetConfOnMispredict, p.lvStabilityTarget}),
+                           p.resetConfOnMispredict, p.lvStabilityTarget,
+                           p.lvFlushLedger, p.lvBenefitPerCorrect}),
       _enableProducerAliasing(p.enableProducerAliasing),
       _vfForwardProducerValue(p.vfForwardProducerValue),
       _vfForwardLastValue(p.vfForwardLastValue),
@@ -122,6 +123,9 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
       ADD_STAT(lvProbationSuppressed, statistics::units::Count::get(),
                "Confident last-value consumptions skipped while their "
                "binding was disabled by strikes"),
+      ADD_STAT(lvEarningSpared, statistics::units::Count::get(),
+               "Second strikes held by the earning/ledger test (the "
+               "binding would otherwise have been disabled)"),
       ADD_STAT(loadLevelAll, statistics::units::Count::get(),
                "Memory-system level that served each completed load "
                "(stlf = store-to-load forward, never reached the caches; "

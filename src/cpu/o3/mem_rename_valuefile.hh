@@ -75,6 +75,16 @@ struct MrnVfConfig
      *  are observed (shadow training continues throughout). 0 disables
      *  the gate entirely. */
     unsigned lvStabilityTarget = 0;
+    /** Flush-weighted ledger: replace the gate's count-based earning
+     *  test (>= 256 corrects per wrong) with a cost-benefit ledger --
+     *  a binding is spared from disabling while
+     *  lvCorrects * lvBenefitPerCorrect >= accumulated flush cost of
+     *  its address-changed wrongs. Cheap (L1D-verified) wrongs drain
+     *  the ledger slower than expensive (L2/memory-verified) ones. */
+    bool lvFlushLedger = false;
+    /** Benefit credited per correct verify, in flushed-instruction
+     *  equivalents (the ledger's one free parameter, swept). */
+    double lvBenefitPerCorrect = 1.0;
 };
 
 /** Reference to a value-file cell: index + the generation observed when the
@@ -161,15 +171,26 @@ class MrnValueFileTables
 
     /** Confidence training at writeback (consumed or shadow). Trains only
      *  when the load's SLC entry is still bound to usedRef -- a rebind
-     *  between rename and writeback discards the outcome. */
+     *  between rename and writeback discards the outcome. For a wrong
+     *  consumed forward, flushed is the squash cost measured at the
+     *  verify (clamped internally); it feeds the flush-weighted ledger
+     *  and is otherwise ignored. */
     void trainVerify(Addr loadPC, const MrnVfRef &usedRef, bool correct,
-                     bool addrChanged = false);
+                     bool addrChanged = false, uint64_t flushed = 0);
 
     /** Whether the most recent trainVerify disabled the binding. */
     bool
     lastStrikeDisabled() const
     {
         return lastDisable;
+    }
+
+    /** Whether the most recent trainVerify held a would-be-disabling
+     *  strike because the binding passed the earning/ledger test. */
+    bool
+    lastStrikeSpared() const
+    {
+        return lastSpare;
     }
 
   private:
@@ -209,6 +230,10 @@ class MrnValueFileTables
          *  lvEarningRatio corrects per wrong (saturating). */
         uint32_t lvCorrects = 0;
         uint16_t lvWrongs = 0;
+        /** Accumulated (clamped, saturating) flush cost of this
+         *  binding's address-changed wrongs -- the debit side of the
+         *  flush-weighted ledger. */
+        uint32_t lvFlushCost = 0;
         /** Consecutive same-line executes observed while disabled;
          *  reaching the stability target re-enables last-value use. */
         uint8_t stableStreak = 0;
@@ -259,8 +284,13 @@ class MrnValueFileTables
     /** Monotonic counter used as the LRU timestamp for all structures. */
     uint64_t lruTick = 0;
     const unsigned lvStabilityTarget;
+    const bool lvFlushLedger;
+    const double lvBenefitPerCorrect;
     /** Whether the most recent trainVerify disabled a binding. */
     bool lastDisable = false;
+    /** Whether the most recent trainVerify spared a binding via the
+     *  earning/ledger test. */
+    bool lastSpare = false;
 };
 
 } // namespace o3

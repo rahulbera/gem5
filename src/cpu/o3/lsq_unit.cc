@@ -1292,7 +1292,7 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 }
                                 mrn->vfTrainVerify(inst->pcState().instAddr(),
                                                    inst->mrnVfRef(), false,
-                                                   vf_ac);
+                                                   vf_ac, squashed);
                             }
                         }
                         DPRINTF(MRN,

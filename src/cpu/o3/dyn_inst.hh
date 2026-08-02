@@ -198,6 +198,11 @@ class DynInst : public ExecContext, public RefCounted
         MrnVfEligible, /// Garfield value-file rendezvous: this load passed
                        /// the participation guards at rename (single
                        /// integer destination)
+        VpPredicted,   /// Garfield VP: a value prediction was consumed
+                       /// into this instruction's renamed destination
+        VpResolved,    /// Garfield VP: the prediction was resolved
+                       /// (verified or accounted squashed); a squash
+                       /// must not re-account it
         MaxFlags
     };
 
@@ -596,6 +601,47 @@ class DynInst : public ExecContext, public RefCounted
     setMrnVfShadowVal(RegVal v)
     {
         _mrnVfShadowVal = v;
+    }
+
+    /** Garfield VP: a value prediction was forwarded into this
+     *  instruction's renamed destination at rename. */
+    bool
+    vpPredicted() const
+    {
+        return instFlags[VpPredicted];
+    }
+    void
+    setVpPredicted()
+    {
+        instFlags[VpPredicted] = true;
+    }
+
+    /** Garfield VP: the prediction resolved -- verified correct,
+     *  verified wrong, or accounted squashed-before-verify. Set on all
+     *  resolution arms (the verify squash is inclusive, so a
+     *  mispredicting instruction would otherwise be double-counted as
+     *  a squashed prediction). */
+    bool
+    vpResolved() const
+    {
+        return instFlags[VpResolved];
+    }
+    void
+    setVpResolved()
+    {
+        instFlags[VpResolved] = true;
+    }
+
+    /** Garfield VP: the predicted value consumed at rename. */
+    RegVal
+    vpPredVal() const
+    {
+        return _vpPredVal;
+    }
+    void
+    setVpPredVal(RegVal v)
+    {
+        _vpPredVal = v;
     }
 
     ////////////////////////////////////////////
@@ -1265,6 +1311,9 @@ class DynInst : public ExecContext, public RefCounted
      *  below-confidence shadow prediction (MrnVfShadowValue). See
      *  mrnVfShadowVal(). */
     RegVal _mrnVfShadowVal = 0;
+
+    /** Garfield VP: value-predicted value consumed at rename. */
+    RegVal _vpPredVal = 0;
 
   public:
     // Value -1 indicates that particular phase

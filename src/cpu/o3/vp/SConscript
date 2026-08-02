@@ -1,6 +1,13 @@
 Import('*')
 
 if env['CONF']['BUILD_ISA']:
+    SimObject('ValuePredictor.py',
+        sim_objects=['BaseValuePredictor', 'LastValueVP'])
+
+    Source('base.cc')
+    Source('last_value.cc')
     Source('lvp_table.cc')
 
     GTest('lvp_table.test', 'lvp_table.test.cc', 'lvp_table.cc')
+
+    DebugFlag('ValuePred')

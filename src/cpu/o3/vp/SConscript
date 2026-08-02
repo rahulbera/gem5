@@ -1,0 +1,6 @@
+Import('*')
+
+if env['CONF']['BUILD_ISA']:
+    Source('lvp_table.cc')
+
+    GTest('lvp_table.test', 'lvp_table.test.cc', 'lvp_table.cc')

@@ -45,7 +45,10 @@ struct LvpLookup
 /** What a train() call did (feeds the wrapper's derived stats). */
 enum class LvpTrainOutcome
 {
+    /** Miss filled an invalid way. */
     Allocated,
+    /** Miss displaced a valid entry (the table-thrash signal). */
+    Evicted,
     Match,
     MismatchReset,
     MismatchDecrement

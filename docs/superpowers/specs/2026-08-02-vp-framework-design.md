@@ -35,9 +35,10 @@ Design constraints carried over from the MRN chapter
 
 Two terms are used precisely throughout this spec:
 
-- **Eligible** — passes the hard rules only: single scalar **integer**
-  destination register, not a serializing/barrier instruction
-  (see Eligibility and Knobs).
+- **Eligible** — passes the hard rules only: single scalar **integer**,
+  non-fixed-mapping destination register; not a serializing, barrier,
+  non-speculative, atomic, or store-conditional instruction (see
+  Eligibility and Knobs).
 - **In scope** — eligible AND permitted by the `onlyLoads` knob (in the
   default loads-only mode, only eligible loads are in scope; in
   all-instructions mode, in scope = eligible).
@@ -71,8 +72,8 @@ params-free core + one test file.
 
 ## The Unified API
 
-`BaseValuePredictor` exposes exactly three pipeline-facing operations
-plus one reserved hook:
+`BaseValuePredictor` exposes four pipeline-facing operations plus one
+reserved hook:
 
 - `std::optional<RegVal> predict(const DynInstPtr &inst)` — called at
   **rename** by `rename.cc` for every renamed instruction that MRN did
@@ -89,9 +90,13 @@ plus one reserved hook:
   stay warm regardless of predictor engagement); non-loads at IEW
   writeback, which only happens in all-instructions mode. Instructions
   already squashed by the time they reach writeback neither verify nor
-  train (wrong-path table pollution). The base class derives
-  predicted/correct from the instruction's VP state, updates base
-  stats, and delegates to `trainImpl(key, actualValue)`.
+  train (wrong-path table pollution). The base class counts the
+  eligible population and delegates to `trainImpl(key, actualValue)`.
+- `void verifyResult(const DynInstPtr &inst, bool correct, uint64_t
+  flushed)` — outcome accounting for a consumed prediction, called
+  from the verify sites (which own the value comparison); `flushed` is
+  the measured inclusive squash cost when wrong. Level attribution
+  runs for loads only.
 - `void notifySquashed(const DynInstPtr &inst)` — a predicted instruction
   was squashed (by a branch mispredict, an MRN squash, etc.) before its
   prediction could verify: counted, never trained — matching MRN's
@@ -193,9 +198,11 @@ replacement, full tags (a research simulator should not fold false
 aliasing artifacts into results; hardware would truncate).
 
 - `train(key, actual)`: on a hit, `actual == lastValue` → saturating
-  `conf++`; mismatch → `conf = 0` (default) or saturating `conf--`
-  (knob), and `lastValue = actual` always. On a miss: allocate (LRU
-  victim), `lastValue = actual`, `conf = 0`.
+  `conf++`; mismatch → `conf = 0` (default) or a decrement clamped
+  below the threshold, `conf = min(conf − 1, confThreshold − 1)`
+  (knob; the clamp keeps the no-livelock invariant true), and
+  `lastValue = actual` always. On a miss: allocate (LRU victim),
+  `lastValue = actual`, `conf = 0`.
 - `predict(key)`: hit ∧ `conf >= confThreshold` → `lastValue`.
 
 `LastValueVP` params (all CLI-exposed):
@@ -220,10 +227,11 @@ Base class (one stats group per attached predictor, e.g.
 `system.cpu.valuePred.*`). Counting sites are pinned to make the
 formulas unambiguous:
 
-- **`eligible`** (vector: loads / non-loads) increments at the **train
-  site** — i.e., once per in-scope, not-already-squashed instruction
-  reaching writeback, including MRN-claimed loads. In loads-only mode
-  the non-loads bucket is structurally zero (it documents the mode).
+- **`eligibleLoads` / `eligibleNonLoads`** (two scalars — the
+  implemented stat names) increment at the **train site** — i.e., once
+  per in-scope, not-already-squashed instruction reaching writeback,
+  including MRN-claimed loads. In loads-only mode the non-loads scalar
+  is structurally zero (it documents the mode).
 - **`predictionsMade`** increments at **rename** (speculative path —
   includes wrong-path predictions later killed by unrelated squashes).
 - Outcomes: **`predictionsCorrect`**, **`predictionsWrong`** (verify

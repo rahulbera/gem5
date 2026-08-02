@@ -81,12 +81,14 @@ LvpTable::train(Addr key, RegVal actual)
                 victim = &set[w];
             }
         }
+        const bool evicted = victim->valid;
         victim->valid = true;
         victim->tag = key;
         victim->lastValue = actual;
         victim->conf = 0;
         victim->lastUse = ++useCounter;
-        return LvpTrainOutcome::Allocated;
+        return evicted ? LvpTrainOutcome::Evicted
+                       : LvpTrainOutcome::Allocated;
     }
 
     hit->lastUse = ++useCounter;

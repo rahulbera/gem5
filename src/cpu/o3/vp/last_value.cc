@@ -37,6 +37,10 @@ LastValueVP::trainImpl(Addr key, RegVal actualValue)
       case LvpTrainOutcome::Allocated:
         lvpStats.allocs++;
         break;
+      case LvpTrainOutcome::Evicted:
+        lvpStats.allocs++;
+        lvpStats.evictions++;
+        break;
       case LvpTrainOutcome::MismatchReset:
         lvpStats.confResets++;
         break;
@@ -57,6 +61,9 @@ LastValueVP::LvpStats::LvpStats(statistics::Group *parent)
                "VPT hits below the confidence threshold (no prediction)"),
       ADD_STAT(allocs, statistics::units::Count::get(),
                "VPT allocations (train misses)"),
+      ADD_STAT(evictions, statistics::units::Count::get(),
+               "VPT allocations that displaced a valid entry (subset "
+               "of allocs; the table-thrash signal)"),
       ADD_STAT(confResets, statistics::units::Count::get(),
                "Confidence resets on a value mismatch"),
       ADD_STAT(confDecrements, statistics::units::Count::get(),

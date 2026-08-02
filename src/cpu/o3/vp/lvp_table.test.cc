@@ -112,9 +112,10 @@ TEST(LvpTable, LruEvictionWithinSet)
 {
     LvpTable t(testConfig()); // 4 sets x 2 ways; index = (key >> 2) & 3
     // Three keys in set 0: 0x000, 0x010, 0x020 (bits [3:2] == 0).
-    t.train(0x000, 1); // way A (LRU after the next train)
-    t.train(0x010, 2); // way B
-    t.train(0x020, 3); // evicts 0x000 (LRU)
+    EXPECT_EQ(t.train(0x000, 1), LvpTrainOutcome::Allocated); // way A
+    EXPECT_EQ(t.train(0x010, 2), LvpTrainOutcome::Allocated); // way B
+    // Displacing a valid entry reports Evicted (the thrash signal).
+    EXPECT_EQ(t.train(0x020, 3), LvpTrainOutcome::Evicted); // evicts 0x000
     EXPECT_FALSE(t.lookup(0x000).hit);
     EXPECT_TRUE(t.lookup(0x010).hit);
     EXPECT_TRUE(t.lookup(0x020).hit);
@@ -154,7 +155,8 @@ TEST(LvpTable, EvictionAllocatesUnconfident)
     LvpTable t(testConfig());
     trainN(t, 0x000, 42, 4);            // confident, conf saturated
     t.train(0x010, 2);                  // way B; 0x000 is now LRU
-    t.train(0x020, 3);                  // evicts the CONFIDENT 0x000
+    // Evicting the CONFIDENT 0x000 must report Evicted...
+    EXPECT_EQ(t.train(0x020, 3), LvpTrainOutcome::Evicted);
     auto r = t.lookup(0x020);
     EXPECT_TRUE(r.hit);
     EXPECT_FALSE(r.confident);          // no stale-confidence carryover

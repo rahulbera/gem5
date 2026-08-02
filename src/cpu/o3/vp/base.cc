@@ -144,7 +144,10 @@ BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
       ADD_STAT(wrongFlushedByLevel, statistics::units::Count::get(),
                "Instructions flushed by wrong predicted loads, "
                "accumulated by serving level (divide by "
-               "predictedLevelWrong for avg flush per wrong)")
+               "predictedLevelWrong for avg flush per wrong; sums to "
+               "squashedInsts in loads-only scope -- in "
+               "all-instructions scope wrong non-loads contribute to "
+               "squashedInsts but not here)")
 {
     static const char *level_names[] = {"stlf", "l1d", "l2", "mem",
                                         "unknown"};

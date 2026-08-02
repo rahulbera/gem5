@@ -96,6 +96,16 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
       numThreads(params.numThreads),
       iewStats(cpu)
 {
+    // Garfield VP: the doomed-window guard's clear (see squash(ThreadID))
+    // requires commit's ROB walk to flag-mark every squash victim in a
+    // single cycle, which holds only while squashWidth is unset. Fail
+    // loudly at construction rather than silently reopen the
+    // shadow-train hole (a livelock/stat-corruption mechanism -- see
+    // the VP design doc's no-livelock invariant).
+    fatal_if(valuePred && params.squashWidth.has_value(),
+             "A value predictor requires an unset squashWidth "
+             "(single-cycle squash victim marking)");
+
     if (dispatchWidth > MaxWidth)
         fatal("dispatchWidth (%d) is larger than compiled limit (%d),\n"
              "\tincrease MaxWidth in src/cpu/o3/limits.hh\n",

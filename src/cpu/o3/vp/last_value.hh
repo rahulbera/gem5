@@ -42,6 +42,9 @@ class LastValueVP : public BaseValuePredictor
         /** Hits below the confidence threshold (no prediction). */
         statistics::Scalar belowThreshold;
         statistics::Scalar allocs;
+        /** Allocations that displaced a valid entry (subset of allocs;
+         *  the table-thrash signal). */
+        statistics::Scalar evictions;
         statistics::Scalar confResets;
         statistics::Scalar confDecrements;
     } lvpStats;

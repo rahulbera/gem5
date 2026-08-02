@@ -1285,7 +1285,7 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
             MemRenamePredictor *mrn = getMemRenamePred();
             if (mrn) {
                 mrn->noteSquashedPrediction(inst->mrnAliased(),
-                                            rob.getMrnSquashReason(tid));
+                                            rob.getSquashReason(tid));
                 // Garfield value-file rendezvous: per-mode squash count,
                 // preserving vfPredictMade == Correct + Wrong + Squashed
                 // alongside the verify-or-squash accounting above.

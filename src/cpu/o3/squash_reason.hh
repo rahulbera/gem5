@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_O3_MRN_SQUASH_REASON_HH__
-#define __CPU_O3_MRN_SQUASH_REASON_HH__
+#ifndef __CPU_O3_SQUASH_REASON_HH__
+#define __CPU_O3_SQUASH_REASON_HH__
 
 namespace gem5
 {
@@ -35,23 +35,24 @@ namespace o3
 {
 
 /**
- * Garfield MRN: why an in-flight memory-renamed load was discarded.
+ * Garfield: why a pipeline squash was raised / why an in-flight
+ * speculative-dataflow prediction (MRN, VP) was discarded.
  *
- * A load that is MRN-forwarded at rename resolves exactly once: it either
- * verifies correct, verifies wrong (mispredict), or is squashed before it
- * can verify at all. This enum categorizes that third outcome.
- *
- * The reason cannot be recovered at the squash site: IEW::squashDueToMemOrder
- * is shared by real memory-order violations AND both MRN mispredict paths, so
- * it is plumbed from the initiator through IEWStruct to Commit to the ROB.
+ * A prediction consumed at rename resolves exactly once: it verifies
+ * correct, verifies wrong (mispredict), or is squashed before it can
+ * verify at all. This enum categorizes that third outcome; it is plumbed
+ * from the squash initiator (IEW) through IEWStruct to Commit to the ROB,
+ * because the cause cannot be recovered at the squash site --
+ * IEW::squashInclusive is shared by real memory-order violations, both
+ * MRN mispredict paths, and VP mispredicts.
  *
  * Deliberately coarse. Traps, interrupts, ReExec replays, HTM aborts,
- * ThreadContext writes, drain and squash-after all collapse into Other; they
- * are expected to be near-zero for compute-bound regions. Front-end squashes
- * (decode, FTQ, BAC) cannot appear here at all -- they discard instructions
- * upstream of rename, which have no MRN prediction yet.
+ * ThreadContext writes, drain and squash-after all collapse into Other;
+ * they are expected to be near-zero for compute-bound regions. Front-end
+ * squashes (decode, FTQ, BAC) cannot appear here at all -- they discard
+ * instructions upstream of rename, which have no prediction yet.
  */
-enum class MrnSquashReason
+enum class SquashReason
 {
     /** Branch mispredict (IEW::squashDueToBranch). */
     Branch,
@@ -61,16 +62,18 @@ enum class MrnSquashReason
     MrnValue,
     /** An OLDER producer-aliasing MRN mispredict squashed this load. */
     MrnAlias,
+    /** An OLDER wrong value prediction (VP) squashed this instruction. */
+    ValuePred,
     /** Trap, interrupt, ReExec, HTM abort, TC write, drain, squash-after. */
     Other,
     Num
 };
 
-/** Stat subnames, indexed by MrnSquashReason. */
-constexpr const char *mrnSquashReasonNames[] = {
-    "branch", "memOrder", "mrnValue", "mrnAlias", "other"};
+/** Stat subnames, indexed by SquashReason. */
+constexpr const char *squashReasonNames[] = {
+    "branch", "memOrder", "mrnValue", "mrnAlias", "valuePred", "other"};
 
 } // namespace o3
 } // namespace gem5
 
-#endif // __CPU_O3_MRN_SQUASH_REASON_HH__
+#endif // __CPU_O3_SQUASH_REASON_HH__

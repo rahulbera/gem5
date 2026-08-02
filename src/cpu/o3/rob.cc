@@ -110,7 +110,7 @@ ROB::resetState()
         squashIt[tid] = instList[tid].end();
         squashedSeqNum[tid] = 0;
         doneSquashing[tid] = true;
-        mrnSquashReason[tid] = MrnSquashReason::Other;
+        squashReason[tid] = SquashReason::Other;
     }
     numInstsInROB = 0;
 
@@ -358,7 +358,7 @@ ROB::doSquash(ThreadID tid)
             MemRenamePredictor *mrn = cpu->getMemRenamePred();
             if (mrn) {
                 mrn->noteSquashedPrediction(squashing->mrnAliased(),
-                                            mrnSquashReason[tid]);
+                                            squashReason[tid]);
                 // Garfield value-file rendezvous: per-mode squash count,
                 // preserving vfPredictMade == Correct + Wrong + Squashed
                 // alongside the verify-or-squash accounting above.

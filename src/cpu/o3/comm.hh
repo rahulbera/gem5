@@ -50,7 +50,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
-#include "cpu/o3/mrn_squash_reason.hh"
+#include "cpu/o3/squash_reason.hh"
 #include "sim/faults.hh"
 
 namespace gem5
@@ -102,11 +102,11 @@ struct IEWStruct
     bool branchTaken[MaxThreads];
     bool includeSquashInst[MaxThreads];
 
-    /** Garfield MRN: why this squash was raised. squashDueToMemOrder is
-     *  shared by real memory-order violations and both MRN mispredict
-     *  paths, so the cause cannot be recovered downstream -- it rides
-     *  along here for the MRN squash accounting in the ROB. */
-    MrnSquashReason mrnSquashReason[MaxThreads];
+    /** Garfield: why this squash was raised. The initiator may be a
+     *  memory-order violation, an MRN mispredict, or a VP mispredict --
+     *  the cause cannot be recovered downstream, so it rides along here
+     *  for the squash accounting in the ROB. */
+    SquashReason squashReason[MaxThreads];
 };
 
 struct IssueStruct

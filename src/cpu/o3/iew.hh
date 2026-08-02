@@ -260,22 +260,32 @@ class IEW
         return scoreboard->getReg(phys_reg);
     }
 
-    /** Sends commit proper information for a squash due to a memory order
-     * violation. Public so the LSQ can trigger MRN misprediction recovery
-     * (squash from the renamed load inclusive) via its iewStage pointer.
-     */
-    /** Squashes from an instruction inclusive. @param reason why the squash
-     *  was raised -- this entry point is shared by real memory-order
-     *  violations and both MRN mispredict paths, and only the caller knows
-     *  which. Carried to the ROB for the MRN squash accounting. */
+    /** Squashes from an instruction inclusive: the instruction itself
+     *  and everything younger refetch (commit redirects to the
+     *  instruction's own PC). Public so the LSQ can trigger MRN
+     *  misprediction recovery via its iewStage pointer. @param reason
+     *  why the squash was raised -- shared by real memory-order
+     *  violations and both MRN mispredict paths, and only the caller
+     *  knows which. Carried to the ROB for the squash accounting. */
     void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
-                             MrnSquashReason reason);
+                             SquashReason reason);
+
+    /** Garfield VP: inclusive squash for a wrong value prediction. The
+     *  predicted instruction refetches and -- with its confidence
+     *  dropped by training before the refetch re-renames -- is not
+     *  re-predicted, so no squash livelock is possible. */
+    void squashDueToValueMispredict(const DynInstPtr &inst, ThreadID tid);
 
   private:
     /** Sends commit proper information for a squash due to a branch
      * mispredict.
      */
     void squashDueToBranch(const DynInstPtr &inst, ThreadID tid);
+
+    /** Shared body of the inclusive squashes: squash from inst
+     *  (inclusive) with the given reason on the IEW->commit wire. */
+    void squashInclusive(const DynInstPtr &inst, ThreadID tid,
+                         SquashReason reason);
 
     /** Sets Dispatch to blocked, and signals back to other stages to block. */
     void block(ThreadID tid);

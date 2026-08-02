@@ -131,14 +131,14 @@ MemRenamePredictor::MemRenameStats::MemRenameStats(statistics::Group *parent)
                "by vfConsumedLevelWrong for avg flush per wrong; sums "
                "to squashedInsts)")
 {
-    const int num_reasons = static_cast<int>(MrnSquashReason::Num);
+    const int num_reasons = static_cast<int>(SquashReason::Num);
 
     predictionsSquashedValue.init(num_reasons).flags(statistics::total);
     predictionsSquashedAlias.init(num_reasons).flags(statistics::total);
 
     for (int i = 0; i < num_reasons; i++) {
-        predictionsSquashedValue.subname(i, mrnSquashReasonNames[i]);
-        predictionsSquashedAlias.subname(i, mrnSquashReasonNames[i]);
+        predictionsSquashedValue.subname(i, squashReasonNames[i]);
+        predictionsSquashedAlias.subname(i, squashReasonNames[i]);
     }
 
     static const char *level_names[] = {"stlf", "l1d", "l2", "mem",

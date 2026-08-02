@@ -492,7 +492,7 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
 
         toCommit->mispredictInst[tid] = inst;
         toCommit->includeSquashInst[tid] = false;
-        toCommit->mrnSquashReason[tid] = MrnSquashReason::Branch;
+        toCommit->squashReason[tid] = SquashReason::Branch;
 
         wroteToTimeBuffer = true;
     }
@@ -500,11 +500,11 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
 }
 
 void
-IEW::squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
-                         MrnSquashReason reason)
+IEW::squashInclusive(const DynInstPtr &inst, ThreadID tid,
+                     SquashReason reason)
 {
-    DPRINTF(IEW, "[tid:%i] Memory violation, squashing violator and younger "
-            "insts, PC: %s [sn:%llu].\n", tid, inst->pcState(), inst->seqNum);
+    DPRINTF(IEW, "[tid:%i] Squashing from PC %s [sn:%llu] inclusive.\n",
+            tid, inst->pcState(), inst->seqNum);
     // Need to include inst->seqNum in the following comparison to cover the
     // corner case when a branch misprediction and a memory violation for the
     // same instruction (e.g. load PC) are detected in the same cycle.  In this
@@ -519,12 +519,25 @@ IEW::squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
         set(toCommit->pc[tid], inst->pcState());
         toCommit->mispredictInst[tid] = NULL;
 
-        // Must include the memory violator in the squash.
+        // Must include the squashing instruction in the squash.
         toCommit->includeSquashInst[tid] = true;
-        toCommit->mrnSquashReason[tid] = reason;
+        toCommit->squashReason[tid] = reason;
 
         wroteToTimeBuffer = true;
     }
+}
+
+void
+IEW::squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
+                         SquashReason reason)
+{
+    squashInclusive(inst, tid, reason);
+}
+
+void
+IEW::squashDueToValueMispredict(const DynInstPtr &inst, ThreadID tid)
+{
+    squashInclusive(inst, tid, SquashReason::ValuePred);
 }
 
 void
@@ -1348,7 +1361,7 @@ IEW::executeInsts()
                 instQueue.violation(inst, violator);
 
                 // Squash.
-                squashDueToMemOrder(violator, tid, MrnSquashReason::MemOrder);
+                squashDueToMemOrder(violator, tid, SquashReason::MemOrder);
 
                 ++iewStats.memOrderViolationEvents;
             }

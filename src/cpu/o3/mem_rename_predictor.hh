@@ -7,7 +7,7 @@
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/o3/mem_rename_valuefile.hh"
-#include "cpu/o3/mrn_squash_reason.hh"
+#include "cpu/o3/squash_reason.hh"
 #include "sim/sim_object.hh"
 
 namespace gem5
@@ -97,7 +97,7 @@ class MemRenamePredictor : public SimObject
      *                     + predictionsSquashedAlias::total
      *  (to within the MRN loads still in flight at the dump boundary). */
     void
-    noteSquashedPrediction(bool is_alias, MrnSquashReason reason)
+    noteSquashedPrediction(bool is_alias, SquashReason reason)
     {
         const int idx = static_cast<int>(reason);
         if (is_alias) {
@@ -395,11 +395,11 @@ class MemRenamePredictor : public SimObject
          * could not). */
         statistics::Scalar aliasVerifyWaitedForProducer;
         /** Value-path forwards discarded before they could verify,
-         *  indexed by MrnSquashReason. */
+         *  indexed by SquashReason. */
         statistics::Vector predictionsSquashedValue;
 
         /** Alias-path forwards discarded before they could verify,
-         *  indexed by MrnSquashReason. */
+         *  indexed by SquashReason. */
         statistics::Vector predictionsSquashedAlias;
 
         /** Value-file predictions made, by forwarding mode (VfMode). */

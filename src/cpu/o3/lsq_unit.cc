@@ -1300,7 +1300,7 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 squashed);
                         iewStage->squashDueToMemOrder(
                             inst, inst->threadNumber,
-                            MrnSquashReason::MrnValue);
+                            SquashReason::MrnValue);
                     } else {
                         inst->setMrnResolved();
                         if (mrn) {
@@ -1927,7 +1927,7 @@ LSQUnit::mrnVerifyAlias(const DynInstPtr &load)
                 load->threadNumber, load->seqNum, load->pcState(), pred_val,
                 true_val, producer->index(), squashed);
         iewStage->squashDueToMemOrder(load, load->threadNumber,
-                                      MrnSquashReason::MrnAlias);
+                                      SquashReason::MrnAlias);
     } else {
         load->setMrnResolved();
         if (mrn) {

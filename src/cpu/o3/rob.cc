@@ -46,6 +46,7 @@
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
+#include "cpu/o3/vp/base.hh"
 #include "debug/Fetch.hh"
 #include "debug/ROB.hh"
 #include "params/BaseO3CPU.hh"
@@ -373,6 +374,17 @@ ROB::doSquash(ThreadID tid)
                     mrn->vfNotePredictSquashed(
                         MemRenamePredictor::VfModeLastValue);
                 }
+            }
+        }
+
+        // Garfield VP: a value-predicted instruction discarded before
+        // it could verify. Same exactly-once discipline as MRN above:
+        // the VpResolved bit, not isSquashed(), makes this count once
+        // across overlapping squash walks.
+        if (squashing->vpPredicted() && !squashing->vpResolved()) {
+            squashing->setVpResolved();
+            if (BaseValuePredictor *vp = cpu->getValuePred()) {
+                vp->notifySquashed(squashing);
             }
         }
 

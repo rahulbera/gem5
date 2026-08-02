@@ -42,15 +42,18 @@
 #include "cpu/o3/rename.hh"
 
 #include <list>
+#include <optional>
 
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
+#include "cpu/o3/vp/base.hh"
 #include "cpu/reg_class.hh"
 #include "debug/Activity.hh"
 #include "debug/MRN.hh"
 #include "debug/Rename.hh"
+#include "debug/ValuePred.hh"
 #include "params/BaseO3CPU.hh"
 
 namespace gem5
@@ -84,6 +87,7 @@ std::string Rename::RenameStats::statusDefinitions[ThreadStatusMax] = {
 Rename::Rename(CPU *_cpu, const BaseO3CPUParams &params)
     : cpu(_cpu),
       memRenamePred(params.memRenamePredictor),
+      valuePred(params.valuePred),
       iewToRenameDelay(params.iewToRenameDelay),
       decodeToRenameDelay(params.decodeToRenameDelay),
       commitToRenameDelay(params.commitToRenameDelay),
@@ -911,6 +915,26 @@ Rename::renameInsts(ThreadID tid)
                         "value=%#x to renamed dest\n",
                         inst->threadNumber, inst->seqNum, inst->pcState(),
                         vf_value);
+            }
+        }
+
+        // Garfield VP: value-predict behind the MRN -> VP -> execute
+        // priority ladder -- only instructions MRN left unclaimed are
+        // consulted. predict() does all eligibility/scope filtering and,
+        // on a hit, stamps the prediction on the instruction; consuming
+        // it is the same physreg-write + scoreboard-ready mechanism as
+        // MRN's value forward. The instruction still executes normally
+        // and verifies at writeback (LSQ for loads, IEW for non-loads).
+        if (valuePred && !inst->isMrned()) {
+            if (std::optional<RegVal> pv = valuePred->predict(inst)) {
+                PhysRegIdPtr dest = inst->renamedDestIdx(0);
+                cpu->setReg(dest, *pv, inst->threadNumber);
+                scoreboard->setReg(dest);
+                DPRINTF(ValuePred,
+                        "[tid:%i] [sn:%llu] VP forward PC %s value=%#x "
+                        "to renamed dest\n",
+                        inst->threadNumber, inst->seqNum, inst->pcState(),
+                        *pv);
             }
         }
 

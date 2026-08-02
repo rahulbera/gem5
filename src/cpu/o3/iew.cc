@@ -45,6 +45,7 @@
 
 #include "cpu/o3/iew.hh"
 
+#include <algorithm>
 #include <queue>
 
 #include "cpu/checker/cpu.hh"
@@ -52,10 +53,12 @@
 #include "cpu/o3/fu_pool.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
+#include "cpu/o3/vp/base.hh"
 #include "cpu/timebuf.hh"
 #include "debug/Activity.hh"
 #include "debug/Drain.hh"
 #include "debug/IEW.hh"
+#include "debug/ValuePred.hh"
 #include "params/BaseO3CPU.hh"
 
 namespace gem5
@@ -79,6 +82,7 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
     : issueToExecQueue(params.backComSize, params.forwardComSize),
       cpu(_cpu),
       memRenamePred(params.memRenamePredictor),
+      valuePred(params.valuePred),
       instQueue(_cpu, this, params),
       ldstQueue(_cpu, this, params),
       commitToIEWDelay(params.commitToIEWDelay),
@@ -124,6 +128,7 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
     for (ThreadID tid = 0; tid < MaxThreads; tid++) {
         dispatchStatus[tid] = Running;
         fetchRedirect[tid] = false;
+        vpPendingSquashSn[tid] = NoPendingSquash;
     }
 
     updateLSQNextCycle = false;
@@ -430,6 +435,7 @@ IEW::takeOverFrom()
     for (ThreadID tid = 0; tid < numThreads; tid++) {
         dispatchStatus[tid] = Running;
         fetchRedirect[tid] = false;
+        vpPendingSquashSn[tid] = NoPendingSquash;
     }
 
     updateLSQNextCycle = false;
@@ -450,6 +456,25 @@ IEW::squash(ThreadID tid)
     // Tell the LDSTQ to start squashing.
     ldstQueue.squash(fromCommit->commitInfo[tid].doneSeqNum, tid);
     updatedQueues = true;
+
+    // Garfield VP doomed-window guard: if this commit-side squash
+    // covers the pending IEW-initiated squash (doneSeqNum <= mark),
+    // close the window. Safety rests on two configuration-level
+    // guarantors (not on the IQ/LSQ walks above, which leave issued
+    // non-memref victims unmarked): (1) squashWidth is unset on this
+    // core, so commit's ROB walk flag-marks every victim in one cycle
+    // at T+1; (2) Fetch::squash -> cpu->removeInstsUntil marks every
+    // remaining in-flight victim at T+2 before IEW ticks
+    // (commitToFetchDelay <= commitToIEWDelay). Revisit this clear if
+    // squashWidth is ever set or those delays reorder. Refetched
+    // instructions carry fresh, higher seqNums; clearing any later
+    // would wrongly gate their verify/train. A commit squash covering
+    // only younger instructions (doneSeqNum > mark: it completed while
+    // an older squash signaled in its shadow is still in flight) must
+    // leave the window open until the older one's completion arrives.
+    if (fromCommit->commitInfo[tid].doneSeqNum <= vpPendingSquashSn[tid]) {
+        vpPendingSquashSn[tid] = NoPendingSquash;
+    }
 
     // Clear the skid buffer in case it has any data in it.
     DPRINTF(IEW,
@@ -481,6 +506,12 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
             " PC: %s "
             "\n", tid, inst->seqNum, inst->pcState() );
 
+    // Garfield VP doomed-window guard: open (or widen) the doomed
+    // window -- until this squash's commit-side completion arrives,
+    // its victims are unmarked and must not verify/train the value
+    // predictor (see vpPendingSquashSn).
+    vpPendingSquashSn[tid] = std::min(vpPendingSquashSn[tid], inst->seqNum);
+
     if (!toCommit->squash[tid] ||
             inst->seqNum < toCommit->squashedSeqNum[tid]) {
         toCommit->squash[tid] = true;
@@ -505,6 +536,13 @@ IEW::squashInclusive(const DynInstPtr &inst, ThreadID tid,
 {
     DPRINTF(IEW, "[tid:%i] Squashing from PC %s [sn:%llu] inclusive.\n",
             tid, inst->pcState(), inst->seqNum);
+
+    // Garfield VP doomed-window guard: open (or widen) the doomed
+    // window -- until this squash's commit-side completion arrives,
+    // its victims are unmarked and must not verify/train the value
+    // predictor (see vpPendingSquashSn).
+    vpPendingSquashSn[tid] = std::min(vpPendingSquashSn[tid], inst->seqNum);
+
     // Need to include inst->seqNum in the following comparison to cover the
     // corner case when a branch misprediction and a memory violation for the
     // same instruction (e.g. load PC) are detected in the same cycle.  In this
@@ -1431,6 +1469,49 @@ IEW::writebackInsts()
         // when it's ready to execute the strictly ordered load.
         if (!inst->isSquashed() && inst->isExecuted() &&
                 inst->getFault() == NoFault) {
+            // Garfield VP (all-instructions scope): verify a
+            // value-predicted non-load against its FU result, then
+            // train on every in-scope non-load. Loads verify and train
+            // at LSQ writeback instead. The onlyLoads() short-circuit
+            // keeps the default loads-only mode zero-cost here;
+            // inScope() guards the integer-dest read.
+            // The vpInSquashShadow() gate closes the doomed window: for
+            // ~2 cycles after an IEW-initiated squash is signaled its
+            // victims still pass the isSquashed() check above, and a
+            // doomed instruction verifying here would count a
+            // wrong-path outcome and re-train the just-corrected table
+            // entry with a value one iteration ahead of the refetch
+            // (the shadow-train livelock). MRN's verify/train paths are
+            // deliberately not gated.
+            if (valuePred && !valuePred->onlyLoads() && !inst->isLoad() &&
+                valuePred->inScope(inst) &&
+                !vpInSquashShadow(tid, inst->seqNum)) {
+                const RegVal actual =
+                    cpu->getReg(inst->renamedDestIdx(0), tid);
+                bool vp_wrong = false;
+                if (inst->vpPredicted() && !inst->vpResolved()) {
+                    inst->setVpResolved();
+                    if (actual != inst->vpPredVal()) {
+                        vp_wrong = true;
+                        InstSeqNum flushed =
+                            cpu->getCurrentInstSeq() - inst->seqNum;
+                        valuePred->verifyResult(inst, false, flushed);
+                        DPRINTF(ValuePred,
+                                "[tid:%i] [sn:%llu] VP mispredict PC %s "
+                                "pred=%#x real=%#x -- squashing %llu "
+                                "insts\n",
+                                tid, inst->seqNum, inst->pcState(),
+                                inst->vpPredVal(), actual, flushed);
+                    } else {
+                        valuePred->verifyResult(inst, true, 0);
+                    }
+                }
+                valuePred->train(inst, actual);
+                if (vp_wrong) {
+                    squashDueToValueMispredict(inst, tid);
+                }
+            }
+
             int dependents = instQueue.wakeDependents(inst);
 
             for (int i = 0; i < inst->numDestRegs(); i++) {

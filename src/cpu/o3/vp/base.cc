@@ -125,7 +125,10 @@ BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
                "Consumed predictions discarded before they could verify"),
       ADD_STAT(squashedInsts, statistics::units::Count::get(),
                "Instructions discarded by VP misprediction squashes "
-               "(inclusive of the mispredicted instruction)"),
+               "(inclusive of the mispredicted instruction; counted at "
+               "verify time, so when an older same-cycle squash wins "
+               "precedence the flush is over-attributed -- same "
+               "convention as MRN's squashedInsts)"),
       ADD_STAT(coverage, statistics::units::Ratio::get(),
                "Verified-correct predictions over the in-scope "
                "population at the train site"),

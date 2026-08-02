@@ -23,10 +23,13 @@ struct LvpConfig
     unsigned assoc = 4;
     /** Saturating confidence counter width. */
     unsigned confBits = 4;
-    /** Minimum confidence required to predict. */
+    /** Minimum confidence required to predict. Must be >= 1: 0 would
+     *  predict on every table hit, voiding the no-livelock invariant
+     *  (the constructor rejects it). */
     unsigned confThreshold = 15;
     /** Decrement (rather than reset to zero) confidence on a value
-     *  mismatch. */
+     *  mismatch, clamped below confThreshold so a wrong verify always
+     *  leaves the entry unable to predict. */
     bool confDecrementOnWrong = false;
 };
 
@@ -63,8 +66,10 @@ class LvpTable
     LvpLookup lookup(Addr key) const;
 
     /** Writeback-time training with the architected value: match
-     *  increments confidence (saturating); mismatch resets (default) or
-     *  decrements it, and always updates the stored value; a miss
+     *  increments confidence (saturating); mismatch resets it (default)
+     *  or decrements it clamped below confThreshold (so a wrong verify
+     *  always lands below the predict threshold -- the no-livelock
+     *  invariant), and always updates the stored value; a miss
      *  allocates over the LRU way with confidence zero. */
     LvpTrainOutcome train(Addr key, RegVal actual);
 

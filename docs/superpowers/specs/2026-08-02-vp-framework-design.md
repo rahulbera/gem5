@@ -126,10 +126,12 @@ VPT entry and confidence never builds.
   younger are squashed and refetched from the load's own PC — MRN's
   actual verify-squash semantics (`includeSquashInst=true`), triggered
   via `IEW::squashDueToValueMispredict` (see Squash Plumbing). Then
-  train. No squash livelock is
-  possible: training runs before the refetched instruction re-renames,
-  and both wrong-handling modes (reset or decrement) drop confidence
-  below threshold, so the refetched instance is not re-predicted.
+  train. No squash livelock: a wrong verify leaves confidence below
+  threshold by construction (reset mode; decrement mode clamps to
+  threshold − 1; threshold 0 is rejected), and IEW's doomed-window
+  guard blocks squash-shadowed instructions from re-training the entry,
+  so the corrective train is the last table write before the refetched
+  instance re-renames — and it is not re-predicted.
 - **Verify — non-loads** (all-instructions mode only). A new, symmetric
   verify site in IEW's writeback path (`IEW::writebackInsts()`): compare
   the FU result against the prediction, with the same inclusive squash

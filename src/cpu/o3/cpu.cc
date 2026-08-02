@@ -50,6 +50,7 @@
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
 #include "cpu/o3/thread_context.hh"
+#include "cpu/o3/vp/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/thread_context.hh"
 #include "debug/Activity.hh"
@@ -1299,6 +1300,16 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
                     mrn->vfNotePredictSquashed(
                         MemRenamePredictor::VfModeLastValue);
                 }
+            }
+        }
+
+        // Garfield VP: same coverage as the MRN block above -- a
+        // value-predicted instruction dropped without ever reaching the
+        // ROB walk.
+        if (inst->vpPredicted() && !inst->vpResolved()) {
+            inst->setVpResolved();
+            if (BaseValuePredictor *vp = getValuePred()) {
+                vp->notifySquashed(inst);
             }
         }
 

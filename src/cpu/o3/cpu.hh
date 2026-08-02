@@ -429,6 +429,15 @@ class CPU : public BaseCPU
         return iew.getMemRenamePred();
     }
 
+    /** Garfield VP: the value predictor, or NULL when VP is disabled.
+     *  It lives in IEW; this exposes it to the ROB, which does the
+     *  squashed-prediction accounting. */
+    BaseValuePredictor *
+    getValuePred() const
+    {
+        return iew.getValuePred();
+    }
+
   protected:
     /** The branch and PC address calculation stage. */
     BAC bac;

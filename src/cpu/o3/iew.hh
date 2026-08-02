@@ -41,6 +41,7 @@
 #ifndef __CPU_O3_IEW_HH__
 #define __CPU_O3_IEW_HH__
 
+#include <limits>
 #include <queue>
 #include <set>
 
@@ -66,6 +67,7 @@ namespace o3
 
 class FUPool;
 class MemRenamePredictor;
+class BaseValuePredictor;
 
 /**
  * IEW handles both single threaded and SMT IEW
@@ -251,6 +253,25 @@ class IEW
         return memRenamePred;
     }
 
+    /** Garfield VP: the value predictor (null = VP disabled). The LSQ
+     *  reaches it through its iewStage back-pointer. */
+    BaseValuePredictor *
+    getValuePred() const
+    {
+        return valuePred;
+    }
+
+    /** Garfield VP doomed-window guard: true while an IEW-initiated
+     *  squash covering seqNum @p sn has been signaled but its victims
+     *  are not yet flag-marked (see vpPendingSquashSn). Both VP verify
+     *  sites (LSQ load writeback and IEW non-load writeback) must skip
+     *  verify+train for such instructions. */
+    bool
+    vpInSquashShadow(ThreadID tid, InstSeqNum sn) const
+    {
+        return sn > vpPendingSquashSn[tid];
+    }
+
     /** Garfield MRN aliasing: whether a physical register is ready
      * (its producer has written back). The LSQ uses this at an aliased load's
      *  writeback to decide whether to verify now or defer. */
@@ -270,10 +291,12 @@ class IEW
     void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid,
                              SquashReason reason);
 
-    /** Garfield VP: inclusive squash for a wrong value prediction. The
-     *  predicted instruction refetches and -- with its confidence
-     *  dropped by training before the refetch re-renames -- is not
-     *  re-predicted, so no squash livelock is possible. */
+    /** Garfield VP: inclusive squash for a wrong value prediction. No
+     *  squash livelock: the wrong-verify's corrective train stays the
+     *  last table write until the refetched instance re-renames (the
+     *  doomed-window guard, vpPendingSquashSn, blocks squash-shadowed
+     *  trains), and a wrong verify leaves confidence below threshold
+     *  in both handling modes, so the refetch is not re-predicted. */
     void squashDueToValueMispredict(const DynInstPtr &inst, ThreadID tid);
 
   private:
@@ -385,6 +408,31 @@ class IEW
     /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
      *  unused in this stage until a later task. */
     MemRenamePredictor *memRenamePred = nullptr;
+
+    /** Garfield VP: value predictor (null = VP disabled). */
+    BaseValuePredictor *valuePred = nullptr;
+
+    /** Garfield VP doomed-window guard: no IEW-initiated squash is in
+     *  its marking window (vpPendingSquashSn idle value). */
+    static constexpr InstSeqNum NoPendingSquash =
+        std::numeric_limits<InstSeqNum>::max();
+
+    /** Garfield VP doomed-window guard: per-thread low-water mark over
+     *  the IEW-initiated squashes (squashDueToBranch and squashInclusive
+     *  -- branch, mem-order/MRN, and VP alike) whose victims commit has
+     *  not yet flag-marked. The signal-to-marking delay is ~2 cycles:
+     *  IEW signals toCommit at T; commit's ROB walk starts at T+1,
+     *  after IEW's pass; the IQ/LSQ walks run when the commit-side
+     *  squash reaches IEW::squash() at T+2. Until then, doomed
+     *  instructions (seqNum > mark) still pass isSquashed() checks at
+     *  the VP verify sites, and letting them verify/train would count
+     *  wrong-path verifies and overwrite the corrective train with a
+     *  one-iteration-ahead value (the shadow-train livelock). Set in
+     *  the two squash triggers; cleared in squash() once the arriving
+     *  commit-side squash covers the mark -- exactly when every victim
+     *  is flag-marked. Refetched instructions carry fresh, higher
+     *  seqNums, so a stale mark would wrongly gate them. */
+    InstSeqNum vpPendingSquashSn[MaxThreads];
 
     /** Records if IEW has written to the time buffer this cycle, so that the
      * CPU can deschedule itself if there is no activity.

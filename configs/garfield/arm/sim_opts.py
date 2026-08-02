@@ -45,7 +45,7 @@ namespace into objects with :func:`make_memory`, :func:`cache_kwargs` and
 checkpoint, the region lengths) stay in the driver that owns them.
 """
 
-from m5.objects import MemRenamePredictor
+from m5.objects import LastValueVP, MemRenamePredictor
 
 from gem5.components.memory.single_channel import (
     DIMM_DDR5_4400,
@@ -184,6 +184,50 @@ def add_common_args(
         help="Value-file correlation: disable forwarding the last value "
         "from a self-bound cell (on by default).",
     )
+    garfield.add_argument(
+        "--use-vp",
+        type=str,
+        choices=["lvp"],
+        default=None,
+        metavar="TYPE",
+        help="Garfield: attach a value predictor of the given type "
+        "(lvp = last-value predictor). Absent = VP disabled (NULL).",
+    )
+    garfield.add_argument(
+        "--vp-all-insts",
+        action="store_true",
+        help="VP scope: predict all eligible instructions, not only loads.",
+    )
+    garfield.add_argument(
+        "--vp-entries",
+        type=int,
+        default=4096,
+        help="VP table entries.",
+    )
+    garfield.add_argument(
+        "--vp-assoc",
+        type=int,
+        default=4,
+        help="VP table associativity.",
+    )
+    garfield.add_argument(
+        "--vp-conf-bits",
+        type=int,
+        default=4,
+        help="VP confidence-counter width in bits.",
+    )
+    garfield.add_argument(
+        "--vp-conf-threshold",
+        type=int,
+        default=15,
+        help="VP minimum confidence required to predict (minimum 1).",
+    )
+    garfield.add_argument(
+        "--vp-conf-decrement",
+        action="store_true",
+        help="Decrement (rather than reset) VP confidence on a value "
+        "mismatch, clamped below the confidence threshold.",
+    )
     return parser
 
 
@@ -221,6 +265,21 @@ def make_mrn(args):
     )
 
 
+def make_vp(args):
+    """The value predictor selected by --use-vp, or None."""
+    if args.use_vp is None:
+        return None
+    assert args.use_vp == "lvp"
+    return LastValueVP(
+        onlyLoads=not args.vp_all_insts,
+        entries=args.vp_entries,
+        assoc=args.vp_assoc,
+        confBits=args.vp_conf_bits,
+        confThreshold=args.vp_conf_threshold,
+        confDecrementOnWrong=args.vp_conf_decrement,
+    )
+
+
 def apply_core_knobs(cpu, args):
     """Apply the shared per-core knobs to one ArmO3CPU (Neoverse V2)."""
     if args.disable_fdp:
@@ -230,6 +289,9 @@ def apply_core_knobs(cpu, args):
     mrn = make_mrn(args)
     if mrn is not None:
         cpu.memRenamePredictor = mrn
+    vp = make_vp(args)
+    if vp is not None:
+        cpu.valuePred = vp
 
 
 def _mrn_banner(args):
@@ -249,6 +311,14 @@ def _mrn_banner(args):
     )
 
 
+def _vp_banner(args):
+    """VP banner fragment naming the predictor and scope."""
+    if not args.use_vp:
+        return "off"
+    scope = "all-insts" if args.vp_all_insts else "loads-only"
+    return f"{args.use_vp} ({scope}) confThreshold={args.vp_conf_threshold}"
+
+
 def describe(args):
     """The machine banner lines implied by the shared knobs."""
     return [
@@ -260,4 +330,5 @@ def describe(args):
         f"  mrn      : "
         f"{_mrn_banner(args)}"
         f"  ghostExec={args.ghost_exec}",
+        f"  vp       : {_vp_banner(args)}",
     ]

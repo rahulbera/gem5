@@ -48,11 +48,13 @@
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/lsq.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
+#include "cpu/o3/vp/base.hh"
 #include "debug/Activity.hh"
 #include "debug/HtmCpu.hh"
 #include "debug/IEW.hh"
 #include "debug/LSQUnit.hh"
 #include "debug/MRN.hh"
+#include "debug/ValuePred.hh"
 #include "mem/packet.hh"
 #include "mem/request.hh"
 
@@ -1315,6 +1317,54 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                             }
                         }
                     }
+                }
+            }
+
+            // Garfield VP: verify a value-predicted load, then train the
+            // predictor on every in-scope load -- predicted or not, and
+            // including MRN-claimed loads (the table stays warm
+            // regardless of who consumed the load). inScope() guards the
+            // integer-dest read below. The squash trigger goes last,
+            // after all accounting, matching the MRN site above.
+            // The vpInSquashShadow() gate closes the doomed window: for
+            // ~2 cycles after an IEW-initiated squash is signaled its
+            // victims still pass the isSquashed() check at the top of
+            // writeback(), and a doomed load verifying here would count
+            // a wrong-path outcome and re-train the just-corrected
+            // table entry with a value one iteration ahead of the
+            // refetch (the shadow-train livelock). MRN's verify/train
+            // paths above are deliberately not gated.
+            if (BaseValuePredictor *vp = iewStage->getValuePred();
+                vp && inst->isLoad() && vp->inScope(inst) &&
+                !iewStage->vpInSquashShadow(inst->threadNumber,
+                                            inst->seqNum)) {
+                const RegVal actual = cpu->getReg(
+                    inst->renamedDestIdx(0), inst->threadNumber);
+                bool vp_wrong = false;
+                if (inst->vpPredicted() && !inst->vpResolved()) {
+                    inst->setVpResolved();
+                    if (actual != inst->vpPredVal()) {
+                        vp_wrong = true;
+                        // Flush cost: the load and every younger
+                        // in-flight inst (inclusive squash).
+                        InstSeqNum flushed =
+                            cpu->getCurrentInstSeq() - inst->seqNum;
+                        vp->verifyResult(inst, false, flushed);
+                        DPRINTF(ValuePred,
+                                "[tid:%i] [sn:%llu] VP mispredict PC %s "
+                                "pred=%#x real=%#x -- squashing %llu "
+                                "insts\n",
+                                inst->threadNumber, inst->seqNum,
+                                inst->pcState(), inst->vpPredVal(),
+                                actual, flushed);
+                    } else {
+                        vp->verifyResult(inst, true, 0);
+                    }
+                }
+                vp->train(inst, actual);
+                if (vp_wrong) {
+                    iewStage->squashDueToValueMispredict(
+                        inst, inst->threadNumber);
                 }
             }
         } else {

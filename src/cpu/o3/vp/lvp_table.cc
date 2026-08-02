@@ -1,5 +1,7 @@
 #include "cpu/o3/vp/lvp_table.hh"
 
+#include <algorithm>
+
 #include "base/intmath.hh"
 #include "base/logging.hh"
 
@@ -26,6 +28,14 @@ LvpTable::LvpTable(const LvpConfig &cfg)
     fatal_if(confThreshold > confMax,
              "LVP confThreshold (%u) exceeds the %u-bit counter max (%u)",
              confThreshold, cfg.confBits, confMax);
+    // Threshold 0 makes conf >= confThreshold a tautology: a punished
+    // entry re-predicts immediately, voiding the no-livelock
+    // precondition that a wrong verify leaves confidence below the
+    // threshold.
+    fatal_if(confThreshold == 0,
+             "LVP confThreshold must be >= 1: 0 predicts on every table "
+             "hit, so a wrong verify cannot leave the entry below "
+             "threshold (squash-livelock hazard)");
 }
 
 unsigned
@@ -89,8 +99,13 @@ LvpTable::train(Addr key, RegVal actual)
 
     hit->lastValue = actual;
     if (confDecrementOnWrong) {
+        // No-livelock invariant: a wrong verify must leave confidence
+        // BELOW the predict threshold, so the refetched instance is not
+        // re-predicted. A plain decrement violates that whenever
+        // conf > confThreshold; clamp to confThreshold - 1 (the
+        // constructor guarantees confThreshold >= 1).
         if (hit->conf > 0) {
-            hit->conf--;
+            hit->conf = std::min(hit->conf - 1, confThreshold - 1);
         }
         return LvpTrainOutcome::MismatchDecrement;
     }

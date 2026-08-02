@@ -30,10 +30,12 @@ class LastValueVP(BaseValuePredictor):
     assoc = Param.Unsigned(4, "Value prediction table associativity")
     confBits = Param.Unsigned(4, "Confidence counter width in bits")
     confThreshold = Param.Unsigned(
-        15, "Minimum confidence required to predict"
+        15,
+        "Minimum confidence required to predict (minimum 1; 0 would "
+        "predict on every table hit and is rejected)",
     )
     confDecrementOnWrong = Param.Bool(
         False,
         "Decrement (rather than reset to zero) confidence on a value "
-        "mismatch",
+        "mismatch, clamped below the confidence threshold",
     )

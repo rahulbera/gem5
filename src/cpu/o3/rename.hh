@@ -64,6 +64,7 @@ namespace o3
 {
 
 class MemRenamePredictor;
+class BaseValuePredictor;
 
 /**
  * Rename handles both single threaded and SMT rename. Its
@@ -359,6 +360,9 @@ class Rename
     /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
      *  unused in this stage until a later task. */
     MemRenamePredictor *memRenamePred = nullptr;
+
+    /** Garfield VP: value predictor (null = VP disabled). */
+    BaseValuePredictor *valuePred = nullptr;
 
     /** Pointer to main time buffer used for backwards communication. */
     TimeBuffer<TimeStruct> *timeBuffer;

@@ -80,14 +80,20 @@ TEST(LvpTable, MismatchDecrementMode)
     LvpConfig c = testConfig();
     c.confDecrementOnWrong = true;
     LvpTable t(c);
-    trainN(t, 0x400, 42, 4); // conf saturated at 3
+    trainN(t, 0x400, 42, 4); // conf saturated at 3 (> threshold 2)
     EXPECT_EQ(t.train(0x400, 99), LvpTrainOutcome::MismatchDecrement);
-    // conf = 2 == threshold: still confident, value updated.
+    // No-livelock invariant: ONE mismatch must land below threshold.
+    // Clamp: conf = min(3 - 1, threshold - 1) = 1 -- NOT the plain
+    // decrement's 2, which would still predict.
     auto r = t.lookup(0x400);
-    EXPECT_TRUE(r.confident);
-    EXPECT_EQ(r.value, 99u);
-    EXPECT_EQ(t.train(0x400, 42), LvpTrainOutcome::MismatchDecrement);
-    EXPECT_FALSE(t.lookup(0x400).confident); // conf = 1 < threshold
+    EXPECT_TRUE(r.hit);
+    EXPECT_FALSE(r.confident);
+    EXPECT_EQ(r.value, 99u); // last value always updated
+    // Pin conf == 1 exactly: one match reaches the threshold (1+1=2);
+    // a clamp to 0 would still be below it here, a clamp to 2 would
+    // have been confident above.
+    EXPECT_EQ(t.train(0x400, 99), LvpTrainOutcome::Match);
+    EXPECT_TRUE(t.lookup(0x400).confident);
 }
 
 TEST(LvpTable, ConfidenceSaturatesAtCounterMax)
@@ -154,6 +160,26 @@ TEST(LvpTable, EvictionAllocatesUnconfident)
     EXPECT_FALSE(r.confident);          // no stale-confidence carryover
     t.train(0x020, 3);                  // one match: conf 1 < threshold 2
     EXPECT_FALSE(t.lookup(0x020).confident);
+}
+
+TEST(LvpTable, DecrementMismatchClampsBelowThreshold)
+{
+    // Wide counter, threshold far below saturation: a single mismatch
+    // must still cross below the threshold (clamp), not drift down by
+    // one from saturation as a plain decrement would.
+    LvpConfig c = testConfig();
+    c.confBits = 4; // counter max 15
+    c.confThreshold = 2;
+    c.confDecrementOnWrong = true;
+    LvpTable t(c);
+    trainN(t, 0x400, 42, 20); // conf saturated at 15 (>> threshold 2)
+    ASSERT_TRUE(t.lookup(0x400).confident);
+    EXPECT_EQ(t.train(0x400, 99), LvpTrainOutcome::MismatchDecrement);
+    // conf = min(15 - 1, threshold - 1) = 1 < 2: must not predict.
+    EXPECT_FALSE(t.lookup(0x400).confident);
+    // Exactly one match short of the threshold after the clamp.
+    EXPECT_EQ(t.train(0x400, 99), LvpTrainOutcome::Match);
+    EXPECT_TRUE(t.lookup(0x400).confident);
 }
 
 TEST(LvpTable, DecrementFloorsAtZero)

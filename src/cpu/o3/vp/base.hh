@@ -127,10 +127,10 @@ class BaseValuePredictor : public SimObject
     /**
      * History-subsystem thin wrappers (framework-level, predictor-
      * agnostic; docs/superpowers/specs/2026-08-03-vtage-design.md,
-     * "History Subsystem"). Pipeline wiring (fetch-side notify,
-     * per-inst snapshot stamping, redirect restores) is Task 3; only
-     * predictors with usesHistory() will ever observe non-default
-     * history state.
+     * "History Subsystem"). The pipeline wiring (fetch-side notify,
+     * per-inst snapshot stamping, redirect restores) lives in
+     * fetch.cc/bac.cc/commit.cc; only predictors with usesHistory()
+     * will ever observe non-default history state.
      */
 
     /** Fetch-side control-flow notification for thread tid: a

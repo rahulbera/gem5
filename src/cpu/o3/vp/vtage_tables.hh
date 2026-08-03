@@ -18,8 +18,9 @@ namespace o3
  * VTAGE SimObject params but is free of any params/SimObject
  * machinery, so the core logic can be built and unit-tested in
  * isolation (the pattern proven by LvpTable). Defaults are the
- * HPCA'14 evaluated configuration
- * (.superpowers/sdd/vtage-paper-brief.md Sec. 1).
+ * HPCA'14 evaluated configuration (Perais & Seznec, HPCA-20 2014;
+ * docs/superpowers/specs/2026-08-03-vtage-design.md,
+ * "Configuration").
  */
 struct VtageConfig
 {
@@ -125,8 +126,8 @@ struct VtageProviderPeek
  * on-demand from the {ghr, path} snapshot (no per-component folded
  * history state to checkpoint/restore -- see
  * docs/superpowers/specs/2026-08-03-vtage-design.md, "Data
- * Structures", and .superpowers/sdd/tage-folds.md for the mirrored
- * gem5-TAGE arithmetic).
+ * Structures"; the fold/index/tag arithmetic mirrors gem5's TAGE,
+ * src/cpu/pred/tage_base.{hh,cc}).
  */
 class VtageTables
 {
@@ -224,19 +225,24 @@ class VtageTables
         uint64_t tag = 0;
     };
 
-    /** ((pc XOR (upc << 48)) >> 2) XOR upc (vp_key.hh's fold, in
-     *  place of TAGE's instShiftAmt, with a trailing XOR of upc): the
-     *  hashed "pc" every fold/index/tag below is built from.
-     *  Deliberately NOT truncated to 32 bits the way gem5's TAGE
-     *  truncates its Addr -> unsigned int: the upc lives in bits
-     *  [48:63] of the pre-shift value, so truncating would throw away
-     *  the micro-PC separation vp_key.hh exists to provide. The
-     *  trailing "XOR upc" is what actually delivers that separation
-     *  into the LOW, masked bits that every index/tag computation
-     *  keeps: bits [48:63] never survive the masks below on their
-     *  own (confirmed by a 120k-lookup randomized sweep before this
-     *  fix), so without it two micro-ops of the same macro-op would
-     *  alias the same table entries. */
+    /** (((pc XOR (upc << 48)) >> 2) << 2) | (upc & 3) -- vp_key.hh's
+     *  fold in place of TAGE's instShiftAmt pre-shift, with the
+     *  micro-op residue CONCATENATED into the two low bits the >> 2
+     *  vacated: the hashed "pc" every fold/index/tag below is built
+     *  from. Deliberately NOT truncated to 32 bits the way gem5's
+     *  TAGE truncates its Addr -> unsigned int: the upc lives in
+     *  bits [48:63] of the pre-shift value, so truncating would
+     *  throw away vp_key.hh's high-bit fold. The low-bit residue is
+     *  what actually delivers micro-op separation into the LOW,
+     *  masked bits that every index/tag computation keeps: bits
+     *  [48:63] never survive the masks below on their own (confirmed
+     *  by a 120k-lookup randomized sweep), so micro-ops 0-3 separate
+     *  fully and micro-ops >= 4 keep the high-bit fold as their only
+     *  distinguisher. Concatenation leaves the PC-delta bits
+     *  untouched; XORing the raw upc into them instead recreates a
+     *  full-table alias at a power-of-two PC distance -- an XOR at
+     *  bit 0 merges (pc, upc = 1) with (pc + 4, upc = 0) for even
+     *  pc >> 2, (pc - 4, upc = 0) for odd. */
     uint64_t shiftedPcOf(Addr pc, MicroPC upc) const;
 
     /** Mirrors gem5 TAGE's FoldedHistory::update() (tage_base.hh),
@@ -244,13 +250,12 @@ class VtageTables
      *  fold-on-demand adaptation
      *  docs/superpowers/specs/2026-08-03-vtage-design.md calls for.
      *  Folds ghr[0:origLength) (bit 0 = newest) into compLength bits.
-     *  See .superpowers/sdd/tage-folds.md Sec. 1 and Sec. 6: because
-     *  this replay always starts from an all-zero register and runs
-     *  for exactly origLength steps, the bit that "ages out" of the
-     *  incremental update (h[origLength]) is always the zero-filled
-     *  placeholder for the entire replay, so that XOR term is elided
-     *  below (XORing with 0 is a no-op) rather than transcribed
-     *  literally. */
+     *  Because this replay always starts from an all-zero register
+     *  and runs for exactly origLength steps, the bit that "ages
+     *  out" of the incremental update (h[origLength]) is always the
+     *  zero-filled placeholder for the entire replay, so that XOR
+     *  term is elided below (XORing with 0 is a no-op) rather than
+     *  transcribed literally from tage_base.hh. */
     uint64_t foldHistory(uint64_t ghr, unsigned origLength,
                          unsigned compLength) const;
 

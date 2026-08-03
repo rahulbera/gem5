@@ -915,8 +915,8 @@ BAC::updatePC(const DynInstPtr &inst, PCStateBase &fetch_pc,
 
     // Garfield VP (history subsystem, VTAGE-class predictors only):
     // the fetch-time {ghr, path} snapshot itself is stamped in
-    // Fetch::buildInst() (review round 2, Fix B), covering the
-    // translation-fault noop path too, which never reaches updatePC().
+    // Fetch::buildInst(), covering the translation-fault noop path
+    // too, which never reaches updatePC().
     // buildInst() precedes updatePC() in the fetch loop for every
     // instruction, so the stamp there is still strictly "pre-update"
     // for this instruction's own contribution below.

@@ -81,9 +81,9 @@ VtageTables::VtageTables(const VtageConfig &cfg, std::function<double()> rng)
     fatal_if(cfg.baseTagBits < 1, "VTAGE baseTagBits (%u) must be >= 1",
              cfg.baseTagBits);
     // F()'s path-hash rotates by up to `numTagged` bits within a
-    // logTaggedEntries-bit register (.superpowers/sdd/tage-folds.md
-    // Sec. 4); the rotation amount must stay strictly smaller than
-    // the register width.
+    // logTaggedEntries-bit register (mirrors gem5 TAGE's F(),
+    // src/cpu/pred/tage_base.cc); the rotation amount must stay
+    // strictly smaller than the register width.
     fatal_if(cfg.numTagged >= logTaggedEntries,
              "VTAGE numTagged (%u) must be < log2(taggedEntries) (%u)",
              cfg.numTagged, logTaggedEntries);
@@ -97,20 +97,24 @@ uint64_t
 VtageTables::shiftedPcOf(Addr pc, MicroPC upc) const
 {
     // vp_key.hh's fold (pc XOR (upc << 48)) in place of TAGE's
-    // instShiftAmt-only pre-shift; NOT truncated to 32 bits the way
-    // gem5's TAGE truncates Addr -> unsigned int, since the upc lives
-    // in bits [48:63] and truncating would discard the micro-PC
-    // separation vp_key.hh exists to provide
-    // (.superpowers/sdd/tage-folds.md Sec. 4, caveat 2).
+    // instShiftAmt-only pre-shift (src/cpu/pred/tage_base.cc); NOT
+    // truncated to 32 bits the way gem5's TAGE truncates Addr ->
+    // unsigned int, since the upc lives in bits [48:63] and
+    // truncating would discard vp_key.hh's high-bit fold.
     //
-    // The trailing "XOR upc" is what actually DELIVERS micro-op
-    // separation into the hashed tables: bits [48:63] never survive
-    // the low, masked bits every index/tag computation below keeps
-    // (confirmed by a 120k-lookup randomized sweep before this fix
-    // found it arithmetically inert), so without this trailing XOR
-    // two micro-ops of the same macro-op would alias identical
-    // indices/tags.
-    return (vpKey(pc, upc) >> 2) ^ upc;
+    // The micro-op residue (upc & 3) is CONCATENATED into the two low
+    // bits the >> 2 vacated, leaving every PC-delta bit untouched.
+    // That residue is what actually DELIVERS micro-op separation into
+    // the hashed tables: bits [48:63] never survive the low, masked
+    // bits every index/tag computation below keeps (confirmed by a
+    // 120k-lookup randomized sweep), so micro-ops 0-3 separate fully
+    // here, and micro-ops >= 4 keep the high-bit fold as their only
+    // distinguisher. XORing the raw upc into the PC-delta bits
+    // instead would recreate a full-table alias at a power-of-two PC
+    // distance: an XOR of upc = 1 at bit k of the shifted PC makes
+    // (pc, upc = 1) collide with (pc +/- 2^(k+2), upc = 0) in every
+    // component's index AND tag -- hence concatenation.
+    return ((vpKey(pc, upc) >> 2) << 2) | (upc & 3);
 }
 
 uint64_t
@@ -185,8 +189,9 @@ VtageTables::Provider
 VtageTables::findProvider(Addr pc, MicroPC upc, const VpHistSnapshot &h) const
 {
     const uint64_t shiftedPc = shiftedPcOf(pc, upc);
-    // Longest-history-first scan; first tag hit is the provider
-    // (.superpowers/sdd/tage-folds.md Sec. 10).
+    // Longest-history-first scan; first tag hit is the provider --
+    // TAGE's selection rule (design doc, "Predict"; mirrors gem5's
+    // TAGE, src/cpu/pred/tage_base.cc).
     for (unsigned bank = numTagged; bank > 0; bank--) {
         const unsigned index = computeIndex(shiftedPc, h, bank);
         const uint64_t tag = computeTag(shiftedPc, h, bank);

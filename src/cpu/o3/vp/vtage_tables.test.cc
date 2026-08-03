@@ -176,7 +176,8 @@ TEST(VtageTables, SameSnapshotGivesSameToken)
 // {2, 4, 8}: flipping bit 3 (inside L=4 and L=8's windows, outside
 // L=2's) should demote the provider from VT3 down to VT1; flipping
 // bit 0 (inside every window) should demote it all the way to VT0.
-// Hand/model-verified: see .superpowers/sdd (task 1 derivation).
+// Hand/model-verified: golden values hand-computed by replaying the
+// FoldedHistory::update() recurrence.
 TEST(VtageTables, LongestMatchWinsThenBitFlipsRevealShorterProviders)
 {
     VtageTables t(comboConfig(), scriptedRng({0.0, 0.9}));
@@ -213,13 +214,13 @@ TEST(VtageTables, LongestMatchWinsThenBitFlipsRevealShorterProviders)
     EXPECT_EQ(t.lookup(pc, 0, hBit0).value, 111u);
 }
 
-// shiftedPcOf's trailing "XOR upc" is what actually delivers micro-op
-// separation into the hashed, masked tables (the pre-fix formula was
-// arithmetically inert here: upc lives in bits [46:62) of the
-// pre-shift value, which never survive the low masked bits any
-// index/tag keeps). Two micro-ops of the same macro-op must get
-// distinct entries and independently reach their own confidence
-// holding their own values.
+// shiftedPcOf concatenates the micro-op residue (upc & 3) into the
+// two low bits the >> 2 vacated -- that residue is what delivers
+// micro-op separation into the hashed, masked tables (the high-bit
+// vpKey fold alone lands in bits [48:63], which never survive the
+// low masked bits any index/tag keeps). Two micro-ops of the same
+// macro-op must get distinct entries and independently reach their
+// own confidence holding their own values.
 TEST(VtageTables, MicroPcSeparation)
 {
     VtageTables t(singleBankConfig(16, 2), constRng(0.0));
@@ -250,6 +251,59 @@ TEST(VtageTables, MicroPcSeparation)
     EXPECT_TRUE(rb.confident);
     EXPECT_EQ(rb.value, 222u);
     EXPECT_NE(ra.token, rb.token);
+}
+
+// Concatenating the micro-op residue must leave the PC-delta bits
+// untouched. XORing the raw upc into the shifted PC instead (the
+// pre-fix formula) toggled its low bits, so (pc, upc=1) aliased
+// (pc+4, upc=0) for even pc>>2 (XOR 1 is +1 there) or (pc-4, upc=0)
+// for odd pc>>2, in EVERY component's index AND tag (the bit-46 high
+// fold never survives the masks) -- silently merging a cracked
+// macro-op's second micro-op with a neighboring instruction. Under an
+// equal, nonzero history each neighbor pair must resolve to distinct
+// entries: distinct tokens once trained, and independently stored,
+// independently retrievable values.
+TEST(VtageTables, MicroOpDoesNotAliasNeighborPc)
+{
+    const Addr pcEven = 0x400890; // pcEven >> 2 is even.
+    const Addr pcOdd = 0x400894;  // pcOdd >> 2 is odd.
+    const VpHistSnapshot h{0x2b, 0x13}; // Equal nonzero history.
+
+    // Fresh table per pair: train key A to 111 and key B to 222 up
+    // to confidence, then check full separation.
+    auto checkDistinct = [&](Addr pcA, MicroPC upcA, Addr pcB,
+                             MicroPC upcB) {
+        VtageTables t(singleBankConfig(16, 2), constRng(0.0));
+
+        // Wrong-train each key from its virgin VT0 entry: allocates
+        // its own tagged (bank 1) entry.
+        t.train(pcA, upcA, h, t.lookup(pcA, upcA, h).token, 111);
+        t.train(pcB, upcB, h, t.lookup(pcB, upcB, h).token, 222);
+
+        const auto tokA = t.lookup(pcA, upcA, h).token;
+        const auto tokB = t.lookup(pcB, upcB, h).token;
+        EXPECT_NE(tokA, tokB); // Distinct entries after training.
+
+        t.train(pcA, upcA, h, tokA, 111); // Correct: c 0 -> 1.
+        t.train(pcB, upcB, h, tokB, 222);
+        t.train(pcA, upcA, h, tokA, 111); // Correct: c 1 -> 2.
+        t.train(pcB, upcB, h, tokB, 222);
+
+        // Independent value storage: an aliased pair would instead
+        // ping-pong one shared entry between 111 and 222 and never
+        // reach confidence.
+        auto ra = t.lookup(pcA, upcA, h);
+        auto rb = t.lookup(pcB, upcB, h);
+        EXPECT_TRUE(ra.confident);
+        EXPECT_TRUE(rb.confident);
+        EXPECT_EQ(ra.value, 111u);
+        EXPECT_EQ(rb.value, 222u);
+    };
+
+    checkDistinct(pcEven, 1, pcEven + 4, 0); // The even-pc>>2 alias.
+    checkDistinct(pcEven, 1, pcEven - 4, 0);
+    checkDistinct(pcOdd, 1, pcOdd - 4, 0); // The odd-pc>>2 alias.
+    checkDistinct(pcOdd, 1, pcOdd + 4, 0);
 }
 
 TEST(VtageTables, TrainWithTokenZeroRecomputesProvider)
@@ -343,7 +397,7 @@ TEST(VtageTables, GoldenTokens)
     EXPECT_EQ(
         t.lookup(0x400004, 0, VpHistSnapshot{0x123456789abcdef0ull, 0x1234})
             .token,
-        17ull);
+        65ull);
 }
 
 TEST(VtageTables, ThresholdGatingDefaultSaturation)
@@ -504,9 +558,10 @@ TEST(VtageTables, AllocationSkipsCandidateWithUsefulBitSet)
               Outcomes{VtageTrainOutcome::CorrectInc});
 
     // A different (pc, ghr) pair whose own bank-1 probe index
-    // coincides with bank1Tok's cell (hand-derived collision), but
-    // whose tag differs, so its own lookup falls straight to VT0.
-    const Addr pc2 = 1088;
+    // coincides with bank1Tok's cell (hand-derived collision under
+    // the concatenating shiftedPcOf), but whose tag differs, so its
+    // own lookup falls straight to VT0.
+    const Addr pc2 = 1040;
     const VpHistSnapshot hProbe{1, 0};
     ASSERT_NE(t.lookup(pc2, 0, hProbe).token, bank1Tok);
     const auto probeVirginTok = t.lookup(pc2, 0, hProbe).token;
@@ -520,6 +575,17 @@ TEST(VtageTables, AllocationSkipsCandidateWithUsefulBitSet)
     // the candidate set because its u bit was set.
     EXPECT_EQ(t.lookup(pc, 0, hBit3).token, bank1Tok);
     EXPECT_EQ(t.lookup(pc, 0, hBit3).value, 222u);
+
+    // Self-check that the collision really happened (guards against
+    // this test going vacuous if the index arithmetic shifts): the
+    // rng pick (0.0 = first qualifying candidate) can only have
+    // skipped bank 1 -- landing pc2's entry in bank 2 -- because
+    // bank 1's candidate WAS bank1Tok's u == 1 cell. A bank-2 entry
+    // vanishes when ghr bit 3 flips (inside L = 4's window, outside
+    // L = 2's), demoting pc2 back to its VT0 token; a (wrongly)
+    // allocated bank-1 entry would survive that flip and still hit.
+    const VpHistSnapshot hProbeBit3{hProbe.ghr ^ (1ull << 3), 0};
+    EXPECT_EQ(t.lookup(pc2, 0, hProbeBit3).token, probeVirginTok);
 }
 
 // Variant of AllocationSkipsCandidateWithUsefulBitSet: this time the

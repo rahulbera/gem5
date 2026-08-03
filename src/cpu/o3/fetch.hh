@@ -402,11 +402,11 @@ class Fetch
      *  see buildInst()/squashFromCommit()/squashFromDecode(). */
     BaseValuePredictor *valuePred = nullptr;
 
-    /** Cached valuePred->usesHistory() (review round 2, Fix E): the
-     *  value predictor is a fully-constructed SimObject by the time
-     *  this ctor runs, so the virtual call is safe here; caching it
-     *  avoids a virtual dispatch on every built instruction and every
-     *  redirect. False when valuePred is null. */
+    /** Cached valuePred->usesHistory(): the value predictor is a
+     *  fully-constructed SimObject by the time this ctor runs, so the
+     *  virtual call is safe here; caching it avoids a virtual
+     *  dispatch on every built instruction and every redirect. False
+     *  when valuePred is null. */
     const bool vpUsesHistory;
 
     /** Time buffer interface. */

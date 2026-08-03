@@ -1361,9 +1361,9 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                         // corrective reset through the token BEFORE the
                         // squash trigger below -- LVP's proven train-
                         // before-squash ordering (design doc, "Verify").
-                        // Reads iewStage's cached bool (review round 2,
-                        // Fix E) instead of the virtual method, keeping
-                        // the per-inst cost to one bool test.
+                        // Reads iewStage's cached bool instead of the
+                        // virtual method, keeping the per-inst cost
+                        // to one bool test.
                         if (iewStage->getVpTrainsAtCommit()) {
                             vp->correctiveReset(inst->vpToken());
                         }

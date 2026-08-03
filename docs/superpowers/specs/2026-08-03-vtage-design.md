@@ -89,14 +89,18 @@ conservative choice.
 ### Predict (rename, via the framework's predict())
 
 1. Build per-component indices/tags by folding the µop-distinguished
-   PC — `((pc XOR (upc << 48)) >> 2) XOR upc` — with
+   PC — `(((pc XOR (upc << 48)) >> 2) << 2) | (upc & 3)` — with
    `snapshot.ghr[0:L(i)]` and `snapshot.path` (TAGE-style folds,
-   computed on demand). The trailing `XOR upc` is load-bearing
-   (amended after Task-1 review): the high-bit fold alone never
-   reaches VTAGE's ≤18-bit hashed tags/indices, so cracked micro-ops
-   would collide in every component — mixing the µop number into the
-   hashed low bits is HPCA'14's own recipe. (LVP's `vpKey` is
-   unaffected: its full-width tags see the high bits.)
+   computed on demand). The µop residue is **concatenated** into the
+   two low bits the `>> 2` vacated, leaving the PC-delta bits
+   untouched: the high-bit fold alone never reaches VTAGE's ≤18-bit
+   hashed tags/indices, so without the low-bit residue cracked
+   micro-ops would collide in every component, and any XOR of the raw
+   upc into the PC-delta bits instead recreates that full-table alias
+   at a power-of-two PC distance (an XOR of upc = 1 at bit k of the
+   shifted PC merges (pc, µop 1) with (pc ± 2^(k+2), µop 0) in every
+   component's index and tag). (LVP's `vpKey` is unaffected: its
+   full-width tags see the high bits.)
 2. Longest-history tag hit = provider; no tagged hit → VT0.
 3. Stamp the provider token on the instruction **unconditionally**;
    deliver the value only if provider `c >= confThreshold`. All
@@ -187,12 +191,17 @@ follow-up replaces it per instruction class.
   - FTQ/BAC resteers that discard no DynInsts need no restore.
 - LVP ignores all of it: predictors declare `usesHistory()`; the
   subsystem is active only when the attached predictor uses it, so
-  LVP configurations remain byte-identical to today.
+  LVP configurations remain behaviorally identical: pre-existing stat
+  values and simTicks are unchanged (the two framework counters —
+  `historyRestores`, `correctiveResetStale` — appear as new
+  zero-valued lines in stats.txt).
 
 ## Framework API Changes
 
 - `predictImpl`/`trainImpl` take a `VpLookupContext {Addr pc; MicroPC
-  upc; uint64_t ghr; uint16_t path;}`. **predictImpl returns a result
+  upc; VpHistSnapshot hist}`, with `VpHistSnapshot = {uint64_t ghr;
+  uint16_t path}` (`vp_types.hh` / `vp_history.hh`). **predictImpl
+  returns a result
   struct `{std::optional<RegVal> value; uint64_t token;}`** — the base
   class stamps the token on every lookup (see Predict step 3) and
   passes it back in at train/verify. LVP ignores context history and
@@ -245,11 +254,13 @@ coverage denominator — count *retiring* instructions, whereas LVP's
 count at writeback includes instructions squashed after writeback;
 VTAGE-vs-LVP coverage comparisons carry this systematic difference
 (stat descriptions will state the counting site; the Stage-IV report
-must repeat the caveat). VTAGE adds: per-component provider counts and
+must repeat the caveat). Two counters live on the BASE class (every
+predictor reports them; zero-valued for LVP): `historyRestores`, a
+vector by initiating redirect plus a `missed` bucket, and
+`correctiveResetStale`. VTAGE adds: per-component provider counts and
 correct/wrong-by-provider (7-way vectors), allocations,
 allocation-failures (u-aging events), corrective resets, token-stale
-recomputes, FPC increments fired/suppressed, history restores by
-initiator.
+recomputes, FPC increments fired/suppressed.
 
 ## Testing Gates
 

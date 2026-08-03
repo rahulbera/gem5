@@ -1467,11 +1467,10 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
     updateComInstStats(head_inst);
 
     // Garfield VP (commit-trained predictors, e.g. VTAGE): train on
-    // every in-scope retiring instruction. The dest physreg is still
-    // mapped here -- this commit's rename-map update (below) frees
-    // only the PREVIOUS mapping, and even that happens in rename
-    // commitToRenameDelay cycles after doneSeqNum is signaled (see
-    // .superpowers/sdd/commit-train.md). Verify (and the wrong-
+    // every in-scope retiring instruction. The retiring inst's dest
+    // physreg stays live here: rename frees only the PREVIOUS
+    // mapping of the arch reg, and only >= commitToRenameDelay
+    // cycles after doneSeqNum is signaled. Verify (and the wrong-
     // prediction squash) stays at writeback; wrong-path instructions
     // never reach this point.
     if (vpTrainsAtCommit && valuePred->inScope(head_inst)) {

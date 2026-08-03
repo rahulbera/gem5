@@ -703,7 +703,7 @@ Fetch::squashFromDecode(const PCStateBase &new_pc, const DynInstPtr squashInst,
     // (design doc, "History Subsystem"). Restore its own fetch-time
     // snapshot, then re-apply its unchanged direction with the
     // corrected target. The actual direction is
-    // readPredTaken() || isUncondCtrl() (review round 2, Fix C) --
+    // readPredTaken() || isUncondCtrl() --
     // decode.cc computes commitInfo.branchTaken the same way, to
     // cover a BTB-missed unconditional direct branch, whose dummy BAC
     // history (bac.cc) always assumes not-taken. Gated on
@@ -765,7 +765,7 @@ Fetch::squashFromCommit(const PCStateBase &new_pc, const InstSeqNum seq_num,
             // any, is a different instruction than the squash point --
             // see comm.hh), so Commit precomputed the exact restore
             // snapshot into the dedicated carrier
-            // (commitInfo.vpHistRestore*, review round 2, Fix A).
+            // (commitInfo.vpHistRestore*).
             const auto &ci = fromCommit->commitInfo[tid];
             if (ci.vpHistRestoreValid) {
                 valuePred->restoreHistory(tid, ci.vpHistRestore);
@@ -1121,9 +1121,9 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     // buildInst() rather than updatePC() also covers the translation-
     // fault noop path (this function's other call site, below), which
     // never reaches updatePC(): its stamp is exactly the pre-fault
-    // history, the correct restore target for the resulting trap
-    // (review round 2, Fix B). Gated on usesHistory() so LVP/baseline
-    // configs execute none of this (Task 3's LVP bit-identity gate).
+    // history, the correct restore target for the resulting trap.
+    // Gated on usesHistory() so LVP/baseline configs execute none of
+    // this (LVP bit-identity is a standing gate).
     if (vpUsesHistory) {
         valuePred->snapshotFor(instruction);
     }

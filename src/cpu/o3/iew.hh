@@ -261,9 +261,9 @@ class IEW
         return valuePred;
     }
 
-    /** Cached valuePred->trainsAtCommit() (review round 2, Fix E): the
-     *  LSQ writeback site reads this instead of calling the virtual
-     *  method itself, keeping the per-inst cost to one bool test. */
+    /** Cached valuePred->trainsAtCommit(): the LSQ writeback site
+     *  reads this instead of calling the virtual method itself,
+     *  keeping the per-inst cost to one bool test. */
     bool
     getVpTrainsAtCommit() const
     {
@@ -421,12 +421,11 @@ class IEW
     /** Garfield VP: value predictor (null = VP disabled). */
     BaseValuePredictor *valuePred = nullptr;
 
-    /** Cached valuePred->trainsAtCommit() (review round 2, Fix E): the
-     *  value predictor is a fully-constructed SimObject by the time
-     *  this ctor runs, so the virtual call is safe here; caching it
-     *  avoids a virtual dispatch on every writeback in this stage (and
-     *  in the LSQ, via getVpTrainsAtCommit()). False when valuePred is
-     *  null. */
+    /** Cached valuePred->trainsAtCommit(): the value predictor is a
+     *  fully-constructed SimObject by the time this ctor runs, so the
+     *  virtual call is safe here; caching it avoids a virtual
+     *  dispatch on every writeback in this stage (and in the LSQ, via
+     *  getVpTrainsAtCommit()). False when valuePred is null. */
     const bool vpTrainsAtCommit;
 
     /** Garfield VP doomed-window guard: no IEW-initiated squash is in

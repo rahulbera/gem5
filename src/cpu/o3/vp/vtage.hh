@@ -58,13 +58,13 @@ class VtageVP : public BaseValuePredictor
      *  candidate choice, both consumed through the injected
      *  std::function<double()> below the table takes. Standard gem5
      *  idiom for a params-free predictor core taking an injected RNG
-     *  (.superpowers/sdd/tage-folds.md, "ALLOC RNG IDIOM" -- mirrors
-     *  cpu/pred/tage.hh's `Random::RandomPtr rng = Random::
-     *  genRandom();`): one instance per SimObject, seeded from the
-     *  global seed, so --rng-seed and any mid-run reseedAll() cover
-     *  VTAGE exactly like every other randomized predictor in the
-     *  tree. GTests instead inject a deterministic functor directly
-     *  into VtageTables, bypassing this member entirely. */
+     *  (mirrors src/cpu/pred/tage.hh's `Random::RandomPtr rng =
+     *  Random::genRandom();` precedent): one instance per SimObject,
+     *  seeded from the global seed, so --rng-seed and any mid-run
+     *  reseedAll() cover VTAGE exactly like every other randomized
+     *  predictor in the tree. GTests instead inject a deterministic
+     *  functor directly into VtageTables, bypassing this member
+     *  entirely. */
     Random::RandomPtr rng = Random::genRandom();
 
     /** Adapts `rng` to VtageTables's std::function<double()> contract

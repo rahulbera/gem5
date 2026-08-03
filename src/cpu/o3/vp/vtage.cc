@@ -43,7 +43,7 @@ VtageVP::predictImpl(const VpLookupContext &ctx)
 
 void
 VtageVP::trainImpl(const VpLookupContext &ctx, RegVal actualValue,
-                   uint64_t token)
+                   uint64_t token, const VpClassifierInfo &)
 {
     // Peek the provider train() is about to resolve -- and whether
     // its confidence is already saturated -- before the mutating

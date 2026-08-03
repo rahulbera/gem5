@@ -2,7 +2,8 @@ Import('*')
 
 if env['CONF']['BUILD_ISA']:
     SimObject('ValuePredictor.py',
-        sim_objects=['BaseValuePredictor', 'LastValueVP', 'VtageVP'])
+        sim_objects=['BaseValuePredictor', 'LastValueVP', 'VtageVP',
+                     'EVtageVP'])
 
     Source('base.cc')
     Source('last_value.cc')
@@ -10,6 +11,7 @@ if env['CONF']['BUILD_ISA']:
     Source('vtage_tables.cc')
     Source('vtage.cc')
     Source('evtage_tables.cc')
+    Source('evtage.cc')
 
     GTest('lvp_table.test', 'lvp_table.test.cc', 'lvp_table.cc')
     GTest('vtage_tables.test', 'vtage_tables.test.cc', 'vtage_tables.cc')

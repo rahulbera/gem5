@@ -188,6 +188,37 @@ class BaseValuePredictor : public SimObject
      *  call accompanies it). */
     void countHistoryRestore(VpHistInitiator initiator);
 
+    /** Count-only per-renamed-instruction hook (design doc docs/
+     *  superpowers/specs/2026-08-04-evtage-design.md, S6's burst-
+     *  misprediction guard): call once per renamed dynamic
+     *  instruction, eligible or not -- LastMispVT-style predictors
+     *  need the full rename rate, not just the eligible/in-scope
+     *  subset (counting only eligible instructions would stretch the
+     *  window several-fold, per the design doc). A bare per-thread
+     *  increment; "no-op" in the sense that no attached predictor
+     *  reads renamedInsts() unless it opts into the burst guard.
+     *  Deliberately not squash-restored (design doc S6: wrong-path
+     *  rename increments are kept). Not yet called from any pipeline
+     *  stage -- wiring a rename-time call site is a one-line follow-
+     *  up once a predictor's burstGuardWindow actually needs live
+     *  data; every predictor's default keeps the guard off, so
+     *  renamedInsts() reading 0 forever is harmless until then. */
+    void
+    notifyRenamed(ThreadID tid)
+    {
+        renamedCount[tid]++;
+    }
+
+    /** Renamed-instruction count for thread tid (see notifyRenamed()).
+     *  Readable by any predictor that wants a burst-guard-style
+     *  window; 0 for every thread until notifyRenamed() is wired into
+     *  a pipeline stage. */
+    unsigned
+    renamedInsts(ThreadID tid) const
+    {
+        return renamedCount[tid];
+    }
+
   protected:
     /** Algorithm-level corrective reset (VTAGE-class only); see
      *  correctiveReset(). Returns whether the token still matched a
@@ -202,10 +233,15 @@ class BaseValuePredictor : public SimObject
 
     /** Algorithm lookup over the lookup context. */
     virtual VpPredictResult predictImpl(const VpLookupContext &ctx) = 0;
-    /** Algorithm training over the lookup context and the provider
-     *  token stamped by the matching predict() (0 if none/stale). */
+    /** Algorithm training over the lookup context, the provider token
+     *  stamped by the matching predict() (0 if none/stale), and the
+     *  classifier context (design doc docs/superpowers/specs/2026-08-
+     *  04-evtage-design.md, "Framework API Changes"). LVP and plain
+     *  VTAGE take and ignore the classifier parameter -- same bit-
+     *  identity pattern as VpLookupContext::hist. */
     virtual void trainImpl(const VpLookupContext &ctx, RegVal actualValue,
-                           uint64_t token) = 0;
+                           uint64_t token,
+                           const VpClassifierInfo &classifier) = 0;
 
     /** Hard eligibility rules: single scalar integer, non-fixed-mapping
      *  destination; not serializing / barrier / non-speculative /
@@ -226,6 +262,11 @@ class BaseValuePredictor : public SimObject
      *  branch/path history (vp_history.hh). Idle -- never advanced or
      *  read -- when no attached predictor sets usesHistory(). */
     VpHistory vpHist[MaxThreads];
+
+    /** Backing store for notifyRenamed()/renamedInsts() (S6's burst-
+     *  guard rename counter). Zero-initialized; stays zero -- and so
+     *  harmless -- until a pipeline stage calls notifyRenamed(). */
+    unsigned renamedCount[MaxThreads] = {};
 
     struct VpStats : public statistics::Group
     {

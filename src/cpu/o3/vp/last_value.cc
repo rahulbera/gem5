@@ -33,7 +33,7 @@ LastValueVP::predictImpl(const VpLookupContext &ctx)
 
 void
 LastValueVP::trainImpl(const VpLookupContext &ctx, RegVal actualValue,
-                       uint64_t)
+                       uint64_t, const VpClassifierInfo &)
 {
     switch (table.train(vpKey(ctx.pc, ctx.upc), actualValue)) {
         case LvpTrainOutcome::Allocated:

@@ -30,7 +30,8 @@ class LastValueVP : public BaseValuePredictor
   protected:
     VpPredictResult predictImpl(const VpLookupContext &ctx) override;
     void trainImpl(const VpLookupContext &ctx, RegVal actualValue,
-                   uint64_t token) override;
+                   uint64_t token,
+                   const VpClassifierInfo &classifier) override;
 
   private:
     LvpTable table;

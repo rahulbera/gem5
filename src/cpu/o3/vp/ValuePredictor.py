@@ -96,3 +96,66 @@ class VtageVP(BaseValuePredictor):
         "confBits - 1). The reset to 0 on a wrong update is never "
         "probabilistic",
     )
+
+
+class EVtageVP(BaseValuePredictor):
+    type = "EVtageVP"
+    cxx_class = "gem5::o3::EVtageVP"
+    cxx_header = "cpu/o3/vp/evtage.hh"
+
+    baseEntries = Param.Unsigned(
+        8192,
+        "VT0 (tagged, 2-way skewed base component) TOTAL entries "
+        "across both ways; must be even, and half must be a power "
+        "of two",
+    )
+    taggedEntries = Param.Unsigned(
+        1024,
+        "Entries per tagged component (VT1..VTnumTagged); all tagged "
+        "components share this size",
+    )
+    numTagged = Param.Unsigned(
+        6,
+        "Number of tagged components (VT1..VTnumTagged). The biased-"
+        "rank token field packs 0 = none, 1 = VT0, 2..(1+numTagged) = "
+        "VT1..VTnumTagged, so this must be <= 7",
+    )
+    historyLengths = VectorParam.Unsigned(
+        [2, 4, 8, 16, 32, 64],
+        "Per-tagged-component history length L(i), shortest to "
+        "longest; size must equal numTagged, each length in [1, 128] "
+        "(the history snapshot is 128 bits)",
+    )
+    baseTagBits = Param.Unsigned(
+        12,
+        "VT0's tag width; tagged component i's (1-based) tag width "
+        "is baseTagBits + i",
+    )
+    confBits = Param.Unsigned(
+        3, "Saturating confidence-counter width, every component"
+    )
+    confThreshold = Param.Unsigned(
+        7,
+        "Minimum confidence required to predict (minimum 1; 0 would "
+        "make the verify-site corrective punish unable to leave an "
+        "entry below threshold -- squash-livelock hazard -- and is "
+        "rejected)",
+    )
+    uBits = Param.Unsigned(
+        2, "Saturating usefulness-counter width, every component"
+    )
+    tickMax = Param.Unsigned(
+        1024,
+        "TICK aging-pass threshold (accumulates NA - 5*ALL after "
+        "every allocation attempt; at this value every entry's "
+        "nonzero usefulness counter is decremented and TICK resets)",
+    )
+    burstGuardWindow = Param.Unsigned(
+        0,
+        "Burst-misprediction guard: while fewer than this many "
+        "instructions have been renamed since the last delivered "
+        "E-VTAGE misprediction, prediction emission is suppressed "
+        "(the lookup and commit training still happen). 0 = off "
+        "(default, the ratified fork); 128 = CVP-1 EVES's own "
+        "behavior.",
+    )

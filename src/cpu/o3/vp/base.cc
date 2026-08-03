@@ -2,12 +2,75 @@
 
 #include "base/logging.hh"
 #include "cpu/o3/dyn_inst.hh"
+#include "cpu/op_class.hh"
+#include "cpu/reg_class.hh"
 #include "params/BaseValuePredictor.hh"
 
 namespace gem5
 {
 namespace o3
 {
+
+namespace
+{
+
+/** Class dispatch for VpClassifierInfo::instClass (design doc docs/
+ *  superpowers/specs/2026-08-04-evtage-design.md, "Class dispatch");
+ *  see vp_types.hh's VpInstClass doc comment for the Undef fallback's
+ *  scope (folds in direct calls/conditional branches, which CVP
+ *  itself dispatches to a deterministic-false arm this port's
+ *  EVtageClassifier has no field to express). */
+VpInstClass
+classifyInst(const DynInstPtr &inst)
+{
+    if (inst->isLoad()) {
+        return VpInstClass::Load;
+    }
+    if (inst->isIndirectCtrl() && inst->isCall()) {
+        return VpInstClass::IndirectCall;
+    }
+    if (inst->isStore()) {
+        return VpInstClass::Store;
+    }
+    switch (inst->opClass()) {
+        case IntAluOp:
+            return VpInstClass::Alu;
+        case IntMultOp:
+        case IntDivOp:
+        case FloatAddOp:
+        case FloatCmpOp:
+        case FloatCvtOp:
+        case FloatMultOp:
+        case FloatMultAccOp:
+        case FloatDivOp:
+        case FloatMiscOp:
+        case FloatSqrtOp:
+            return VpInstClass::SlowAlu;
+        default:
+            return VpInstClass::Undef;
+    }
+}
+
+/** CVP's NbOperand (design doc, "Operand-count mapping"): the count of
+ *  integer, non-flag source registers. Testing is(IntRegClass)
+ *  positively excludes CCRegClass (ARM condition-code sources, a
+ *  distinct reg class -- see src/arch/arm/regs/cc.hh) as well as
+ *  Float/Vec sources, matching the design doc's rationale for not
+ *  using the raw numSrcRegs() count. */
+unsigned
+countIntOperands(const DynInstPtr &inst)
+{
+    unsigned count = 0;
+    const int n = static_cast<int>(inst->numSrcRegs());
+    for (int i = 0; i < n; i++) {
+        if (inst->srcRegIdx(i).is(IntRegClass)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+} // anonymous namespace
 
 BaseValuePredictor::BaseValuePredictor(const BaseValuePredictorParams &p)
     : SimObject(p),
@@ -57,7 +120,7 @@ BaseValuePredictor::predict(const DynInstPtr &inst)
         return std::nullopt;
     }
     VpLookupContext ctx{inst->pcState().instAddr(), inst->pcState().microPC(),
-                        inst->vpHistSnap()};
+                        inst->vpHistSnap(), inst->threadNumber};
     VpPredictResult result = predictImpl(ctx);
     inst->setVpToken(result.token);
     if (result.value) {
@@ -80,8 +143,20 @@ BaseValuePredictor::train(const DynInstPtr &inst, RegVal actualValue)
         stats.eligibleNonLoads++;
     }
     VpLookupContext ctx{inst->pcState().instAddr(), inst->pcState().microPC(),
-                        inst->vpHistSnap()};
-    trainImpl(ctx, actualValue, inst->vpToken());
+                        inst->vpHistSnap(), inst->threadNumber};
+    VpClassifierInfo classifier;
+    classifier.instClass = classifyInst(inst);
+    classifier.memSrcLevel = inst->memSrcLevel();
+    classifier.nbOperand = countIntOperands(inst);
+    // By the time train() runs (writeback for writeback-trained
+    // predictors, commit for trainsAtCommit ones), a delivered
+    // prediction has already been verified -- vpResolved() is always
+    // true when vpPredicted() is true (a delivered-and-wrong
+    // prediction squashes inclusively and never reaches train() for
+    // this same instance; see correctiveReset()'s doc comment).
+    classifier.deliveredCorrect = inst->vpPredicted() && inst->vpResolved() &&
+                                  inst->vpPredVal() == actualValue;
+    trainImpl(ctx, actualValue, inst->vpToken(), classifier);
 }
 
 void

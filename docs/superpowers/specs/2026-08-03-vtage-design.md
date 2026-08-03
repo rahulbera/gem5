@@ -88,9 +88,15 @@ conservative choice.
 
 ### Predict (rename, via the framework's predict())
 
-1. Build per-component indices/tags by folding
-   `{pc XOR (upc << 48)}` with `snapshot.ghr[0:L(i)]` and
-   `snapshot.path` (TAGE-style folds, computed on demand).
+1. Build per-component indices/tags by folding the µop-distinguished
+   PC — `((pc XOR (upc << 48)) >> 2) XOR upc` — with
+   `snapshot.ghr[0:L(i)]` and `snapshot.path` (TAGE-style folds,
+   computed on demand). The trailing `XOR upc` is load-bearing
+   (amended after Task-1 review): the high-bit fold alone never
+   reaches VTAGE's ≤18-bit hashed tags/indices, so cracked micro-ops
+   would collide in every component — mixing the µop number into the
+   hashed low bits is HPCA'14's own recipe. (LVP's `vpKey` is
+   unaffected: its full-width tags see the high bits.)
 2. Longest-history tag hit = provider; no tagged hit → VT0.
 3. Stamp the provider token on the instruction **unconditionally**;
    deliver the value only if provider `c >= confThreshold`. All

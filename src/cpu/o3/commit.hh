@@ -66,6 +66,7 @@ namespace o3
 
 class ThreadState;
 class MemRenamePredictor;
+class BaseValuePredictor;
 
 /**
  * Commit handles single threaded and SMT commit. Its width is
@@ -362,6 +363,24 @@ class Commit
     /** Garfield: memory-rename predictor (null = MRN disabled). Held only;
      *  unused in this stage until a later task. */
     MemRenamePredictor *memRenamePred = nullptr;
+
+    /** Garfield VP: value predictor (null = VP disabled). Drives the
+     *  commit-time train() hook (trainsAtCommit()) and the
+     *  history-subsystem squash-point restore (usesHistory()). */
+    BaseValuePredictor *valuePred = nullptr;
+
+    /** Cached valuePred->usesHistory() (review round 2, Fix E): the
+     *  value predictor is a fully-constructed SimObject by the time
+     *  this ctor runs, so the virtual call is safe here; caching it
+     *  avoids a virtual dispatch on every squashAll()/inclusive-squash
+     *  decision. False (and every VP squash-carrier write skipped)
+     *  when valuePred is null. */
+    const bool vpUsesHistory;
+
+    /** Cached valuePred->trainsAtCommit() (review round 2, Fix E):
+     *  avoids a virtual dispatch on every retiring instruction in
+     *  commitHead(). False when valuePred is null. */
+    const bool vpTrainsAtCommit;
 
     /** Vector of all of the threads. */
     std::vector<ThreadState *> thread;

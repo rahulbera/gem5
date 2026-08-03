@@ -106,10 +106,12 @@ class BaseValuePredictor : public SimObject
      *  entry. Resets confidence through the token (tag-checked so a
      *  reallocated entry is not hijacked); no value write, no
      *  allocation. No-op for predictors that keep writeback
-     *  training. */
-    virtual void
-    correctiveReset(uint64_t)
-    {}
+     *  training. Returns whether the token still matched a live
+     *  provider; a stale token (the entry was reallocated since
+     *  predict()/train() stamped it) is counted as
+     *  correctiveResetStale here -- the reset itself (on a live
+     *  match) is counted by the derived predictor. */
+    bool correctiveReset(uint64_t token);
 
     /** Scope knob: loads only (default) vs all eligible instructions. */
     bool
@@ -125,10 +127,10 @@ class BaseValuePredictor : public SimObject
     /**
      * History-subsystem thin wrappers (framework-level, predictor-
      * agnostic; docs/superpowers/specs/2026-08-03-vtage-design.md,
-     * "History Subsystem"). Nothing calls these yet -- the pipeline
-     * wiring (fetch-side notify, per-inst snapshot stamping, redirect
-     * restores) is Task 3; only predictors with usesHistory() will
-     * ever observe non-default history state.
+     * "History Subsystem"). Pipeline wiring (fetch-side notify,
+     * per-inst snapshot stamping, redirect restores) is Task 3; only
+     * predictors with usesHistory() will ever observe non-default
+     * history state.
      */
 
     /** Fetch-side control-flow notification for thread tid: a
@@ -137,6 +139,18 @@ class BaseValuePredictor : public SimObject
      *  path (masked to historyPathBits wide). */
     void notifyControlFlow(ThreadID tid, bool isCond, bool predTaken,
                            Addr target);
+
+    /** Path-history register width (see _historyPathBits below).
+     *  Exposed so Commit can precompute a restore-carrier snapshot via
+     *  vp_history.hh's advanceSnapshot() -- a pure function, so it
+     *  needs pathBits passed in explicitly -- without mutating any
+     *  live history state (design doc, "History Subsystem", the
+     *  squash-after restore rule). */
+    unsigned
+    historyPathBits() const
+    {
+        return _historyPathBits;
+    }
 
     /** Stamp thread tid's current history state onto inst as its
      *  fetch-time snapshot. */
@@ -147,7 +161,45 @@ class BaseValuePredictor : public SimObject
      *  call sites, not here). */
     void restoreHistory(ThreadID tid, const VpHistSnapshot &snap);
 
+    /** Which pipeline redirect initiated a restoreHistory() call
+     *  (design doc, "History Subsystem" restore table); indexes the
+     *  historyRestores stat via countHistoryRestore(). Front-end-only
+     *  resteers (bacResteer, FTQ pops) discard no DynInsts and never
+     *  restore, so they have no bucket here. */
+    enum class VpHistInitiator
+    {
+        Branch,      ///< IEW-resolved branch/indirect mispredict (commit).
+        Decode,      ///< Decode-detected direct-branch target correction.
+        Inclusive,   ///< Inclusive VP/memory-order squash (commit).
+        Trap,        ///< Trap/interrupt/TC/drain squashAll (commit).
+        SquashAfter, ///< Commit squash-after (commit).
+        /** Commit could not resolve a restore-carrier snapshot for an
+         *  Inclusive/Trap/SquashAfter redirect (e.g. the victim
+         *  instruction was no longer resolvable in the ROB, or a
+         *  trap/TC fired with an already-empty ROB) -- no restore
+         *  happened; the live history register was left as-is. */
+        Missed,
+        Num
+    };
+
+    /** Bump the per-initiator historyRestores stat. Call once per
+     *  restoreHistory() at each pipeline redirect site (or, for
+     *  Missed, once per unresolved carrier -- no restoreHistory()
+     *  call accompanies it). */
+    void countHistoryRestore(VpHistInitiator initiator);
+
   protected:
+    /** Algorithm-level corrective reset (VTAGE-class only); see
+     *  correctiveReset(). Returns whether the token still matched a
+     *  live provider. Default true (no-op predictors, and predictors
+     *  that never call this because trainsAtCommit() is false, never
+     *  report staleness). */
+    virtual bool
+    correctiveResetImpl(uint64_t)
+    {
+        return true;
+    }
+
     /** Algorithm lookup over the lookup context. */
     virtual VpPredictResult predictImpl(const VpLookupContext &ctx) = 0;
     /** Algorithm training over the lookup context and the provider
@@ -195,6 +247,13 @@ class BaseValuePredictor : public SimObject
         /** Instructions discarded by VP misprediction squashes
          *  (inclusive: the mispredicted instruction itself counts). */
         statistics::Scalar squashedInsts;
+        /** History-subsystem restores (usesHistory() predictors only),
+         *  by initiator -- see VpHistInitiator. */
+        statistics::Vector historyRestores;
+        /** correctiveReset() calls (trainAtCommit predictors' verify-
+         *  wrong arm) whose token no longer matched a live provider
+         *  (the entry was reallocated in flight). */
+        statistics::Scalar correctiveResetStale;
         /** correct / (eligibleLoads + eligibleNonLoads). */
         statistics::Formula coverage;
         /** correct / (correct + wrong). */

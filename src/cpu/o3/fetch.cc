@@ -57,6 +57,7 @@
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/vp/base.hh"
 #include "debug/Activity.hh"
 #include "debug/Drain.hh"
 #include "debug/Fetch.hh"
@@ -116,6 +117,8 @@ Fetch::IcachePort::IcachePort(Fetch *_fetch, CPU *_cpu) :
 Fetch::Fetch(CPU *_cpu, const BaseO3CPUParams &params)
     : fetchPolicy(params.smtFetchPolicy),
       cpu(_cpu),
+      valuePred(params.valuePred),
+      vpUsesHistory(valuePred && valuePred->usesHistory()),
       bac(nullptr),
       ftq(nullptr),
       decoupledFrontEnd(params.decoupledFrontEnd),
@@ -694,6 +697,29 @@ Fetch::squashFromDecode(const PCStateBase &new_pc, const DynInstPtr squashInst,
 {
     DPRINTF(Fetch, "[tid:%i] Squashing from decode.\n", tid);
 
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // squashInst is always the mispredicted branch itself here --
+    // decode only ever corrects its TARGET, never its direction
+    // (design doc, "History Subsystem"). Restore its own fetch-time
+    // snapshot, then re-apply its unchanged direction with the
+    // corrected target. The actual direction is
+    // readPredTaken() || isUncondCtrl() (review round 2, Fix C) --
+    // decode.cc computes commitInfo.branchTaken the same way, to
+    // cover a BTB-missed unconditional direct branch, whose dummy BAC
+    // history (bac.cc) always assumes not-taken. Gated on
+    // usesHistory() so LVP/baseline configs execute none of this.
+    if (vpUsesHistory && squashInst) {
+        valuePred->restoreHistory(tid, squashInst->vpHistSnap());
+        if (squashInst->isControl()) {
+            valuePred->notifyControlFlow(tid, squashInst->isCondCtrl(),
+                                         squashInst->readPredTaken() ||
+                                             squashInst->isUncondCtrl(),
+                                         new_pc.instAddr());
+        }
+        valuePred->countHistoryRestore(
+            BaseValuePredictor::VpHistInitiator::Decode);
+    }
+
     doSquash(new_pc, squashInst, tid);
 
     // Tell the CPU to remove any instructions that are in flight between
@@ -706,6 +732,65 @@ Fetch::squashFromCommit(const PCStateBase &new_pc, const InstSeqNum seq_num,
                         DynInstPtr squashInst, ThreadID tid)
 {
     DPRINTF(Fetch, "[tid:%i] Squash from commit.\n", tid);
+
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // restore per the commit-side initiator (design doc, "History
+    // Subsystem"). Gated on usesHistory() so LVP/baseline configs
+    // execute none of this.
+    if (vpUsesHistory) {
+        using Initiator = BaseValuePredictor::VpHistInitiator;
+        const DynInstPtr &mispredictInst =
+            fromCommit->commitInfo[tid].mispredictInst;
+        if (mispredictInst) {
+            // IEW-resolved branch mispredict / indirect target
+            // correction: squashInst == mispredictInst and survives
+            // the squash (it is NOT itself discarded). Restore its
+            // own snapshot, then advance by the commit-resolved
+            // outcome -- this is exactly the correction for both
+            // direction mispredicts and target-only (indirect)
+            // mispredicts.
+            valuePred->restoreHistory(tid, squashInst->vpHistSnap());
+            if (squashInst->isControl()) {
+                valuePred->notifyControlFlow(
+                    tid, squashInst->isCondCtrl(),
+                    fromCommit->commitInfo[tid].branchTaken,
+                    new_pc.instAddr());
+            }
+            valuePred->countHistoryRestore(Initiator::Branch);
+        } else {
+            // Inclusive VP/memory-order squash, trap/interrupt/TC/
+            // drain, or squash-after: none of these have a usable
+            // DynInst-based restore path here (the trap case has no
+            // squashInst at all; the inclusive case's squashInst, if
+            // any, is a different instruction than the squash point --
+            // see comm.hh), so Commit precomputed the exact restore
+            // snapshot into the dedicated carrier
+            // (commitInfo.vpHistRestore*, review round 2, Fix A).
+            const auto &ci = fromCommit->commitInfo[tid];
+            if (ci.vpHistRestoreValid) {
+                valuePred->restoreHistory(tid, ci.vpHistRestore);
+                switch (ci.vpHistRestoreKind) {
+                    case VpHistRestoreKind::Inclusive:
+                        valuePred->countHistoryRestore(Initiator::Inclusive);
+                        break;
+                    case VpHistRestoreKind::Trap:
+                        valuePred->countHistoryRestore(Initiator::Trap);
+                        break;
+                    case VpHistRestoreKind::SquashAfter:
+                        valuePred->countHistoryRestore(Initiator::SquashAfter);
+                        break;
+                }
+            } else {
+                // Commit could not resolve a restore snapshot (e.g.
+                // the victim instruction was no longer resolvable in
+                // the ROB, or a trap/TC fired with an already-empty
+                // ROB -- nothing was in flight to roll back in that
+                // case, so the live register may already be correct,
+                // but there's no way to confirm it here).
+                valuePred->countHistoryRestore(Initiator::Missed);
+            }
+        }
+    }
 
     doSquash(new_pc, squashInst, tid);
 
@@ -1026,6 +1111,22 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     instruction->setTid(tid);
 
     instruction->setThreadState(cpu->thread[tid]);
+
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // stamp this instruction's fetch-time {ghr, path} snapshot here --
+    // BEFORE any history advance for it (BAC::updatePC(), called on
+    // this same instruction later in the fetch loop, only folds this
+    // instruction's own control-flow contribution into the live
+    // register -- design doc, "History Subsystem"). Stamping in
+    // buildInst() rather than updatePC() also covers the translation-
+    // fault noop path (this function's other call site, below), which
+    // never reaches updatePC(): its stamp is exactly the pre-fault
+    // history, the correct restore target for the resulting trap
+    // (review round 2, Fix B). Gated on usesHistory() so LVP/baseline
+    // configs execute none of this (Task 3's LVP bit-identity gate).
+    if (vpUsesHistory) {
+        valuePred->snapshotFor(instruction);
+    }
 
     DPRINTF(Fetch, "[tid:%i] Instruction PC %s created [sn:%lli].\n",
             tid, this_pc, seq);

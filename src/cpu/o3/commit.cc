@@ -58,6 +58,8 @@
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/mem_rename_predictor.hh"
 #include "cpu/o3/thread_state.hh"
+#include "cpu/o3/vp/base.hh"
+#include "cpu/o3/vp/vp_history.hh"
 #include "cpu/timebuf.hh"
 #include "debug/Activity.hh"
 #include "debug/Commit.hh"
@@ -109,6 +111,9 @@ Commit::Commit(CPU *_cpu, const BaseO3CPUParams &params)
     : commitPolicy(params.smtCommitPolicy),
       cpu(_cpu),
       memRenamePred(params.memRenamePredictor),
+      valuePred(params.valuePred),
+      vpUsesHistory(valuePred && valuePred->usesHistory()),
+      vpTrainsAtCommit(valuePred && valuePred->trainsAtCommit()),
       iewToCommitDelay(params.iewToCommitDelay),
       commitToIEWDelay(params.commitToIEWDelay),
       renameToROBDelay(params.renameToROBDelay),
@@ -542,6 +547,32 @@ Commit::squashAll(ThreadID tid)
     toIEW->commitInfo[tid].mispredictInst = NULL;
     toIEW->commitInfo[tid].squashInst = NULL;
 
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // squashAll() serves traps/interrupts/TC writes/drain (and, via
+    // squashFromSquashAfter() below, squash-after -- which overrides
+    // this with its own carrier). None of these carry a squashing
+    // DynInst on the commitInfo.squashInst wire (deliberately left
+    // NULL above, unchanged from baseline -- squashInst is consumed
+    // elsewhere for macroop-continuation purposes and must not be
+    // repurposed here). Instead stash the squash-point snapshot in
+    // the dedicated VP-only carrier: the ROB head -- still un-retired
+    // here, since rob->squash() above marks it squashed rather than
+    // it ever having reached the normal commitHead/retire path -- IS
+    // the squash-point instruction the design spec wants restored
+    // exactly (fetch.cc's squashFromCommit()). An empty ROB (e.g. an
+    // interrupt, which only fires once the pipeline has fully
+    // drained) has no such instruction; leave the carrier invalid so
+    // fetch counts it as a missed restore.
+    toIEW->commitInfo[tid].vpHistRestoreValid = false;
+    if (vpUsesHistory) {
+        toIEW->commitInfo[tid].vpHistRestoreKind = VpHistRestoreKind::Trap;
+        if (!rob->isEmpty(tid)) {
+            toIEW->commitInfo[tid].vpHistRestoreValid = true;
+            toIEW->commitInfo[tid].vpHistRestore =
+                rob->readHeadInst(tid)->vpHistSnap();
+        }
+    }
+
     set(toIEW->commitInfo[tid].pc, pc[tid]);
 }
 
@@ -590,6 +621,27 @@ Commit::squashFromSquashAfter(ThreadID tid)
     // the squash. It'll try to re-fetch an instruction executing in
     // microcode unless this is set.
     toIEW->commitInfo[tid].squashInst = squashAfterInst[tid];
+
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // squashAll() above stashed a Trap-kind carrier using the (now
+    // wrong) post-retire ROB head; override it with the actual
+    // squash-after rule -- squashAfterInst already committed, so
+    // restore its own snapshot advanced past its own contribution,
+    // using the ACTUAL (not predicted) outcome: whether it branched,
+    // and the corrected next-fetch PC squashAll() just set into
+    // commitInfo.pc.
+    if (vpUsesHistory) {
+        const DynInstPtr &sq_inst = squashAfterInst[tid];
+        toIEW->commitInfo[tid].vpHistRestoreKind =
+            VpHistRestoreKind::SquashAfter;
+        toIEW->commitInfo[tid].vpHistRestoreValid = true;
+        toIEW->commitInfo[tid].vpHistRestore =
+            advanceSnapshot(sq_inst->vpHistSnap(), sq_inst->isCondCtrl(),
+                            sq_inst->pcState().branching(),
+                            toIEW->commitInfo[tid].pc->instAddr(),
+                            valuePred->historyPathBits());
+    }
+
     squashAfterInst[tid] = NULL;
 
     commitStatus[tid] = ROBSquashing;
@@ -979,6 +1031,31 @@ Commit::commit()
                      toIEW->commitInfo[tid].branchTaken = true;
                 }
                 ++stats.branchMispredicts;
+            }
+
+            // Garfield VP (history subsystem, VTAGE-class predictors
+            // only): an inclusive VP/memory-order squash (no
+            // mispredictInst -- that path restores via the existing
+            // mispredictInst/squashInst branch in fetch.cc) has no
+            // natural DynInst restore path there, so precompute the
+            // carrier here instead. The victim instruction I
+            // (fromIEW->squashedSeqNum[tid], BEFORE any
+            // includeSquashInst decrement) is still ROB-resident at
+            // this point -- rob->squash() above marks it squashed,
+            // never removes it -- so its own fetch-time snapshot IS
+            // the restore target exactly: I never advanced history on
+            // its own behalf before it was itself squashed.
+            toIEW->commitInfo[tid].vpHistRestoreValid = false;
+            if (vpUsesHistory && !toIEW->commitInfo[tid].mispredictInst) {
+                toIEW->commitInfo[tid].vpHistRestoreKind =
+                    VpHistRestoreKind::Inclusive;
+                DynInstPtr victim =
+                    rob->findInst(tid, fromIEW->squashedSeqNum[tid]);
+                if (victim) {
+                    toIEW->commitInfo[tid].vpHistRestoreValid = true;
+                    toIEW->commitInfo[tid].vpHistRestore =
+                        victim->vpHistSnap();
+                }
             }
 
             set(toIEW->commitInfo[tid].pc, fromIEW->pc[tid]);
@@ -1388,6 +1465,19 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
     }
 
     updateComInstStats(head_inst);
+
+    // Garfield VP (commit-trained predictors, e.g. VTAGE): train on
+    // every in-scope retiring instruction. The dest physreg is still
+    // mapped here -- this commit's rename-map update (below) frees
+    // only the PREVIOUS mapping, and even that happens in rename
+    // commitToRenameDelay cycles after doneSeqNum is signaled (see
+    // .superpowers/sdd/commit-train.md). Verify (and the wrong-
+    // prediction squash) stays at writeback; wrong-path instructions
+    // never reach this point.
+    if (vpTrainsAtCommit && valuePred->inScope(head_inst)) {
+        const RegVal actual = cpu->getReg(head_inst->renamedDestIdx(0), tid);
+        valuePred->train(head_inst, actual);
+    }
 
     DPRINTF(Commit,
             "[tid:%i] [sn:%llu] Committing instruction with PC %s\n",

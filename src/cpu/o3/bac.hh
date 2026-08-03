@@ -59,6 +59,7 @@ namespace o3
 class CPU;
 class FTQ;
 class FetchTarget;
+class BaseValuePredictor;
 typedef std::shared_ptr<FetchTarget> FetchTargetPtr;
 
 /********************************************************************
@@ -338,6 +339,18 @@ class BAC
 
     /** BPredUnit. */
     branch_prediction::BPredUnit *bpu;
+
+    /** Garfield VP: value predictor (null = VP disabled). Only its
+     *  history-subsystem hooks (usesHistory()) are exercised here --
+     *  see updatePC(). */
+    BaseValuePredictor *valuePred = nullptr;
+
+    /** Cached valuePred->usesHistory() (review round 2, Fix E): the
+     *  value predictor is a fully-constructed SimObject by the time
+     *  this ctor runs, so the virtual call is safe here; caching it
+     *  avoids a virtual dispatch on every fetched instruction in
+     *  updatePC(). False when valuePred is null. */
+    const bool vpUsesHistory;
 
     /** Fetch target Queue. */
     FTQ *ftq;

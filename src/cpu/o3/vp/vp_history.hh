@@ -65,6 +65,47 @@ struct VpHistory
     }
 };
 
+/**
+ * Pure (non-mutating) version of branchShift()/takenTarget(), folded
+ * into one call: compute the snapshot that results from applying one
+ * control-flow event to `snap`, without touching any live
+ * VpHistory/vpHist[tid] state. Commit uses this to precompute a
+ * restore-carrier value (design doc, "History Subsystem", the
+ * squash-after restore rule) for the fetch-side restoreHistory() call
+ * to consume later -- keeping the single-writer timing invariant that
+ * only fetch ever mutates the live history register, exactly when it
+ * processes the squash.
+ */
+inline VpHistSnapshot
+advanceSnapshot(const VpHistSnapshot &snap, bool isCond, bool taken,
+                Addr target, unsigned pathBits)
+{
+    VpHistory hist{snap};
+    if (isCond) {
+        hist.branchShift(taken);
+    }
+    if (taken) {
+        hist.takenTarget(target, pathBits);
+    }
+    return hist.state;
+}
+
+/**
+ * Which pipeline redirect a commit-computed restore carrier
+ * (CommitComm::vpHistRestore, comm.hh) is for. Branch/Decode
+ * initiators restore via their existing DynInst-based paths (they
+ * always have a live mispredictInst/squashInst to read a snapshot
+ * off), so they have no carrier and no entry here; see
+ * BaseValuePredictor::VpHistInitiator (base.hh) for the full
+ * initiator set the historyRestores stat tracks.
+ */
+enum class VpHistRestoreKind
+{
+    Inclusive,
+    Trap,
+    SquashAfter
+};
+
 } // namespace o3
 } // namespace gem5
 

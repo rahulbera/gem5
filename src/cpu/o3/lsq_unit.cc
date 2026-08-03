@@ -1357,11 +1357,26 @@ LSQUnit::writeback(const DynInstPtr &inst, PacketPtr pkt)
                                 inst->threadNumber, inst->seqNum,
                                 inst->pcState(), inst->vpPredVal(),
                                 actual, flushed);
+                        // Garfield VP (trainAtCommit predictors only):
+                        // corrective reset through the token BEFORE the
+                        // squash trigger below -- LVP's proven train-
+                        // before-squash ordering (design doc, "Verify").
+                        // Reads iewStage's cached bool (review round 2,
+                        // Fix E) instead of the virtual method, keeping
+                        // the per-inst cost to one bool test.
+                        if (iewStage->getVpTrainsAtCommit()) {
+                            vp->correctiveReset(inst->vpToken());
+                        }
                     } else {
                         vp->verifyResult(inst, true, 0);
                     }
                 }
-                vp->train(inst, actual);
+                // trainsAtCommit() predictors train at commit instead
+                // (Commit::commitHead()); this site only verifies for
+                // them.
+                if (!iewStage->getVpTrainsAtCommit()) {
+                    vp->train(inst, actual);
+                }
                 if (vp_wrong) {
                     iewStage->squashDueToValueMispredict(
                         inst, inst->threadNumber);

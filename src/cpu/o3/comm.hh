@@ -51,6 +51,7 @@
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/squash_reason.hh"
+#include "cpu/o3/vp/vp_history.hh"
 #include "sim/faults.hh"
 
 namespace gem5
@@ -233,6 +234,21 @@ struct TimeStruct
         /// the IEW stage.
         bool strictlyOrdered = false; // *I
 
+        /// Garfield VP (history subsystem, VTAGE-class predictors
+        /// only): a precomputed history-register restore snapshot for
+        /// the Inclusive/Trap/SquashAfter initiators, which have no
+        /// mispredictInst and (for Trap) no usable squashInst to read
+        /// a snapshot off directly (design doc, "History Subsystem").
+        /// Populated only when an attached predictor sets
+        /// usesHistory(); fetch.cc's squashFromCommit() consumes it
+        /// verbatim (no further advance -- Commit already did any
+        /// advancing) when squash is set and mispredictInst is null.
+        /// vpHistRestoreValid false means Commit could not resolve a
+        /// snapshot (counted as the historyRestores 'missed' stat).
+        bool vpHistRestoreValid = false; // *F
+        VpHistSnapshot vpHistRestore;    // *F
+        VpHistRestoreKind vpHistRestoreKind =
+            VpHistRestoreKind::Inclusive; // *F
     };
 
     CommitComm commitInfo[MaxThreads];

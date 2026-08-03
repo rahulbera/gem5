@@ -83,6 +83,7 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
       cpu(_cpu),
       memRenamePred(params.memRenamePredictor),
       valuePred(params.valuePred),
+      vpTrainsAtCommit(valuePred && valuePred->trainsAtCommit()),
       instQueue(_cpu, this, params),
       ldstQueue(_cpu, this, params),
       commitToIEWDelay(params.commitToIEWDelay),
@@ -1512,11 +1513,23 @@ IEW::writebackInsts()
                                 "insts\n",
                                 tid, inst->seqNum, inst->pcState(),
                                 inst->vpPredVal(), actual, flushed);
+                        // Garfield VP (trainAtCommit predictors only):
+                        // corrective reset through the token BEFORE the
+                        // squash trigger below -- LVP's proven train-
+                        // before-squash ordering (design doc, "Verify").
+                        if (vpTrainsAtCommit) {
+                            valuePred->correctiveReset(inst->vpToken());
+                        }
                     } else {
                         valuePred->verifyResult(inst, true, 0);
                     }
                 }
-                valuePred->train(inst, actual);
+                // trainsAtCommit() predictors train at commit instead
+                // (Commit::commitHead()); this site only verifies for
+                // them.
+                if (!vpTrainsAtCommit) {
+                    valuePred->train(inst, actual);
+                }
                 if (vp_wrong) {
                     squashDueToValueMispredict(inst, tid);
                 }

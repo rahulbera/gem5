@@ -138,6 +138,22 @@ BaseValuePredictor::restoreHistory(ThreadID tid, const VpHistSnapshot &snap)
     vpHist[tid].restore(snap);
 }
 
+void
+BaseValuePredictor::countHistoryRestore(VpHistInitiator initiator)
+{
+    stats.historyRestores[static_cast<unsigned>(initiator)]++;
+}
+
+bool
+BaseValuePredictor::correctiveReset(uint64_t token)
+{
+    bool live = correctiveResetImpl(token);
+    if (!live) {
+        stats.correctiveResetStale++;
+    }
+    return live;
+}
+
 BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
     : statistics::Group(parent),
       ADD_STAT(eligibleLoads, statistics::units::Count::get(),
@@ -161,6 +177,13 @@ BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
                "verify time, so when an older same-cycle squash wins "
                "precedence the flush is over-attributed -- same "
                "convention as MRN's squashedInsts)"),
+      ADD_STAT(historyRestores, statistics::units::Count::get(),
+               "History-subsystem restores (usesHistory() predictors "
+               "only), by initiating pipeline redirect; 'missed' counts "
+               "an initiator that could not resolve a restore snapshot"),
+      ADD_STAT(correctiveResetStale, statistics::units::Count::get(),
+               "correctiveReset() calls whose token no longer matched a "
+               "live provider (trainAtCommit predictors only)"),
       ADD_STAT(coverage, statistics::units::Ratio::get(),
                "Verified-correct predictions over the in-scope "
                "population at the train site"),
@@ -190,6 +213,13 @@ BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
         predictedLevelCorrect.subname(i, level_names[i]);
         predictedLevelWrong.subname(i, level_names[i]);
         wrongFlushedByLevel.subname(i, level_names[i]);
+    }
+
+    static const char *hist_restore_names[] = {
+        "branch", "decode", "inclusive", "trap", "squashAfter", "missed"};
+    historyRestores.init(6).flags(statistics::total);
+    for (int i = 0; i < 6; i++) {
+        historyRestores.subname(i, hist_restore_names[i]);
     }
 
     coverage.flags(statistics::total);

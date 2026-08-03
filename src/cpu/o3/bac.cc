@@ -45,6 +45,7 @@
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/ftq.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/vp/base.hh"
 #include "debug/Activity.hh"
 #include "debug/BAC.hh"
 #include "debug/Branch.hh"
@@ -77,6 +78,8 @@ std::string BAC::BACStats::statusStrings[ThreadStatusMax] = {
 BAC::BAC(CPU *_cpu, const BaseO3CPUParams &params)
     : cpu(_cpu),
       bpu(params.branchPred),
+      valuePred(params.valuePred),
+      vpUsesHistory(valuePred && valuePred->usesHistory()),
       ftq(nullptr),
       wroteToTimeBuffer(false),
       decoupledFrontEnd(params.decoupledFrontEnd),
@@ -910,6 +913,14 @@ BAC::updatePC(const DynInstPtr &inst, PCStateBase &fetch_pc,
     bool predict_taken;
     ThreadID tid = inst->threadNumber;
 
+    // Garfield VP (history subsystem, VTAGE-class predictors only):
+    // the fetch-time {ghr, path} snapshot itself is stamped in
+    // Fetch::buildInst() (review round 2, Fix B), covering the
+    // translation-fault noop path too, which never reaches updatePC().
+    // buildInst() precedes updatePC() in the fetch loop for every
+    // instruction, so the stamp there is still strictly "pre-update"
+    // for this instruction's own contribution below.
+
     if (inst->isControl()) {
         // The instruction is a control instruction.
 
@@ -938,6 +949,14 @@ BAC::updatePC(const DynInstPtr &inst, PCStateBase &fetch_pc,
 
         if (predict_taken) {
             ++stats.predTakenBranches;
+        }
+
+        // Garfield VP: fold this control transfer into the history
+        // register(s) -- conditional direction into ghr, taken
+        // target bits into path.
+        if (vpUsesHistory) {
+            valuePred->notifyControlFlow(tid, inst->isCondCtrl(),
+                                         predict_taken, fetch_pc.instAddr());
         }
 
     } else {

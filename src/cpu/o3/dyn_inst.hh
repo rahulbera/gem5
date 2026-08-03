@@ -59,6 +59,7 @@
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/lsq_unit.hh"
 #include "cpu/o3/mem_rename_valuefile.hh"
+#include "cpu/o3/vp/vp_history.hh"
 #include "cpu/op_class.hh"
 #include "cpu/reg_class.hh"
 #include "cpu/static_inst.hh"
@@ -642,6 +643,38 @@ class DynInst : public ExecContext, public RefCounted
     setVpPredVal(RegVal v)
     {
         _vpPredVal = v;
+    }
+
+    /** Garfield VP: the {ghr, path} history snapshot stamped at fetch
+     *  (docs/superpowers/specs/2026-08-03-vtage-design.md, "History
+     *  Subsystem"). Only meaningful for history-aware predictors
+     *  (BaseValuePredictor::usesHistory()); LVP never reads it. */
+    const VpHistSnapshot &
+    vpHistSnap() const
+    {
+        return _vpHistSnap;
+    }
+    void
+    setVpHistSnap(const VpHistSnapshot &snap)
+    {
+        _vpHistSnap = snap;
+    }
+
+    /** Garfield VP: the opaque provider token stamped by predict() on
+     *  every lookup (even below-confidence ones), recovered at
+     *  train()/verify() to locate the exact provider entry without a
+     *  second table search. 0 = no lookup was made (out of scope, or
+     *  an MRN-claimed load that bypassed predict()); LVP always
+     *  stamps 0. */
+    uint64_t
+    vpToken() const
+    {
+        return _vpToken;
+    }
+    void
+    setVpToken(uint64_t token)
+    {
+        _vpToken = token;
     }
 
     ////////////////////////////////////////////
@@ -1314,6 +1347,14 @@ class DynInst : public ExecContext, public RefCounted
 
     /** Garfield VP: value-predicted value consumed at rename. */
     RegVal _vpPredVal = 0;
+
+    /** Garfield VP: fetch-time {ghr, path} history snapshot for
+     *  history-aware predictors. See vpHistSnap(). */
+    VpHistSnapshot _vpHistSnap;
+
+    /** Garfield VP: opaque provider token stamped by predict(). See
+     *  vpToken(). */
+    uint64_t _vpToken = 0;
 
   public:
     // Value -1 indicates that particular phase

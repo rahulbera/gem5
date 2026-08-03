@@ -19,6 +19,13 @@ class BaseValuePredictor(SimObject):
         "by the integer-only eligibility rule; the knob exists so the "
         "interface is stable when FP/vector support lands.",
     )
+    historyPathBits = Param.Unsigned(
+        16,
+        "Width in bits of the VP-private path-history register "
+        "maintained by the framework's history subsystem. Only "
+        "consumed by history-aware predictors (VTAGE-class); LVP "
+        "ignores it.",
+    )
 
 
 class LastValueVP(BaseValuePredictor):

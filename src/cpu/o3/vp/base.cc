@@ -1,7 +1,7 @@
 #include "cpu/o3/vp/base.hh"
 
+#include "base/logging.hh"
 #include "cpu/o3/dyn_inst.hh"
-#include "cpu/o3/vp/vp_key.hh"
 #include "params/BaseValuePredictor.hh"
 
 namespace gem5
@@ -13,8 +13,14 @@ BaseValuePredictor::BaseValuePredictor(const BaseValuePredictorParams &p)
     : SimObject(p),
       _onlyLoads(p.onlyLoads),
       _scalarOnly(p.scalarOnly),
+      _historyPathBits(p.historyPathBits),
       stats(this)
-{}
+{
+    fatal_if(p.historyPathBits == 0 || p.historyPathBits > 16,
+             "historyPathBits (%u) must be in [1, 16] (path register "
+             "is 16 bits wide)",
+             p.historyPathBits);
+}
 
 bool
 BaseValuePredictor::eligible(const DynInstPtr &inst) const
@@ -50,15 +56,16 @@ BaseValuePredictor::predict(const DynInstPtr &inst)
     if (!inScope(inst)) {
         return std::nullopt;
     }
-    const Addr key = vpKey(inst->pcState().instAddr(),
-                           inst->pcState().microPC());
-    std::optional<RegVal> v = predictImpl(key);
-    if (v) {
+    VpLookupContext ctx{inst->pcState().instAddr(), inst->pcState().microPC(),
+                        inst->vpHistSnap()};
+    VpPredictResult result = predictImpl(ctx);
+    inst->setVpToken(result.token);
+    if (result.value) {
         stats.predictionsMade++;
         inst->setVpPredicted();
-        inst->setVpPredVal(*v);
+        inst->setVpPredVal(*result.value);
     }
-    return v;
+    return result.value;
 }
 
 void
@@ -72,8 +79,9 @@ BaseValuePredictor::train(const DynInstPtr &inst, RegVal actualValue)
     } else {
         stats.eligibleNonLoads++;
     }
-    trainImpl(vpKey(inst->pcState().instAddr(), inst->pcState().microPC()),
-              actualValue);
+    VpLookupContext ctx{inst->pcState().instAddr(), inst->pcState().microPC(),
+                        inst->vpHistSnap()};
+    trainImpl(ctx, actualValue, inst->vpToken());
 }
 
 void
@@ -104,6 +112,30 @@ BaseValuePredictor::notifySquashed(const DynInstPtr &)
     // (and future per-reason buckets); the base count needs only the
     // event. Unnamed to satisfy -Werror=unused-parameter.
     stats.predictionsSquashed++;
+}
+
+void
+BaseValuePredictor::notifyControlFlow(ThreadID tid, bool isCond,
+                                      bool predTaken, Addr target)
+{
+    if (isCond) {
+        vpHist[tid].branchShift(predTaken);
+    }
+    if (predTaken) {
+        vpHist[tid].takenTarget(target, _historyPathBits);
+    }
+}
+
+void
+BaseValuePredictor::snapshotFor(const DynInstPtr &inst) const
+{
+    inst->setVpHistSnap(vpHist[inst->threadNumber].state);
+}
+
+void
+BaseValuePredictor::restoreHistory(ThreadID tid, const VpHistSnapshot &snap)
+{
+    vpHist[tid].restore(snap);
 }
 
 BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)

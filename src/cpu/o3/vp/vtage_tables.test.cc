@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "cpu/o3/vp/vp_history.hh"
 #include "cpu/o3/vp/vtage_tables.hh"
 
 using namespace gem5;
@@ -73,6 +74,80 @@ scriptedRng(std::vector<double> seq)
 }
 
 } // namespace
+
+// VpHistory (vp_history.hh) is the framework's fetch-side history
+// register pair -- VtageTables folds pc/upc against its snapshotted
+// {ghr, path}, but VpHistory itself is params-free and predictor-
+// agnostic, so its own shift/fold/restore behavior is pinned here
+// rather than only indirectly through VtageTables lookups.
+
+// branchShift shifts the newest direction into bit 0; each later
+// shift pushes older bits up one position.
+TEST(VpHistory, GhrNewestBitOrdering)
+{
+    VpHistory h;
+    h.branchShift(true);
+    h.branchShift(false);
+    // Newest (most recently shifted) direction is bit 0; the earlier
+    // one has moved up to bit 1.
+    EXPECT_EQ(h.state.ghr & 0x1ull, 0ull);
+    EXPECT_EQ((h.state.ghr >> 1) & 0x1ull, 1ull);
+    EXPECT_EQ(h.state.ghr, 0x2ull);
+
+    // A third shift moves both prior bits up one more position.
+    h.branchShift(true);
+    EXPECT_EQ(h.state.ghr & 0x1ull, 1ull);
+    EXPECT_EQ((h.state.ghr >> 1) & 0x1ull, 0ull);
+    EXPECT_EQ((h.state.ghr >> 2) & 0x1ull, 1ull);
+    EXPECT_EQ(h.state.ghr, 0x5ull);
+}
+
+// takenTarget folds low target-PC bits in at the bottom (3 bits per
+// call: (target >> 2) & 7) and masks the result to pathBits wide.
+// pathBits = 16 here is wide enough that the mask never truncates,
+// so the exact fold recipe is checked directly; pathBits = 4 then
+// reruns the identical two targets to confirm the mask does
+// truncate the same computation's upper bits.
+TEST(VpHistory, PathFoldAndMask)
+{
+    VpHistory h16;
+    h16.takenTarget(0x400894, 16); // (0 << 3) | ((0x400894 >> 2) & 7)
+    EXPECT_EQ(h16.state.path, 0x5u);
+    h16.takenTarget(0x400898, 16); // (0x5 << 3) | ((0x400898 >> 2) & 7)
+    EXPECT_EQ(h16.state.path, 0x2Eu);
+
+    VpHistory h4;
+    h4.takenTarget(0x400894, 4);
+    EXPECT_EQ(h4.state.path, 0x5u); // Fits in 4 bits: no truncation yet.
+    h4.takenTarget(0x400898, 4);
+    // Unmasked value would be 0x2E (as above); masked to 4 bits it
+    // truncates to 0x2E & 0xF == 0xE.
+    EXPECT_EQ(h4.state.path, 0xEu);
+}
+
+// snapshotFor()/restoreHistory() (base.hh) are thin wrappers around
+// exactly this copy/restore pair -- pin it directly at the
+// VpHistory level: a snapshot taken mid-stream must be recoverable
+// byte-for-byte after further advances.
+TEST(VpHistory, SnapshotRestoreRoundtrip)
+{
+    VpHistory h;
+    h.branchShift(true);
+    h.takenTarget(0x400894, 16);
+    h.branchShift(false);
+
+    const VpHistSnapshot snap = h.state; // Copy at this point.
+
+    h.branchShift(true);
+    h.takenTarget(0x400898, 16);
+    h.branchShift(true);
+    ASSERT_NE(h.state.ghr, snap.ghr);
+    ASSERT_NE(h.state.path, snap.path);
+
+    h.restore(snap);
+    EXPECT_EQ(h.state.ghr, snap.ghr);
+    EXPECT_EQ(h.state.path, snap.path);
+}
 
 TEST(VtageTables, ColdLookupFallsBackToVT0)
 {

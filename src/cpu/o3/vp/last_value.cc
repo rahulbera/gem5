@@ -1,5 +1,6 @@
 #include "cpu/o3/vp/last_value.hh"
 
+#include "cpu/o3/vp/vp_key.hh"
 #include "params/LastValueVP.hh"
 
 namespace gem5
@@ -14,41 +15,42 @@ LastValueVP::LastValueVP(const LastValueVPParams &p)
       lvpStats(this)
 {}
 
-std::optional<RegVal>
-LastValueVP::predictImpl(Addr key)
+VpPredictResult
+LastValueVP::predictImpl(const VpLookupContext &ctx)
 {
     lvpStats.lookups++;
-    LvpLookup r = table.lookup(key);
+    LvpLookup r = table.lookup(vpKey(ctx.pc, ctx.upc));
     if (!r.hit) {
-        return std::nullopt;
+        return {std::nullopt, 0};
     }
     lvpStats.hits++;
     if (!r.confident) {
         lvpStats.belowThreshold++;
-        return std::nullopt;
+        return {std::nullopt, 0};
     }
-    return r.value;
+    return {r.value, 0};
 }
 
 void
-LastValueVP::trainImpl(Addr key, RegVal actualValue)
+LastValueVP::trainImpl(const VpLookupContext &ctx, RegVal actualValue,
+                       uint64_t)
 {
-    switch (table.train(key, actualValue)) {
-      case LvpTrainOutcome::Allocated:
-        lvpStats.allocs++;
-        break;
-      case LvpTrainOutcome::Evicted:
-        lvpStats.allocs++;
-        lvpStats.evictions++;
-        break;
-      case LvpTrainOutcome::MismatchReset:
-        lvpStats.confResets++;
-        break;
-      case LvpTrainOutcome::MismatchDecrement:
-        lvpStats.confDecrements++;
-        break;
-      case LvpTrainOutcome::Match:
-        break;
+    switch (table.train(vpKey(ctx.pc, ctx.upc), actualValue)) {
+        case LvpTrainOutcome::Allocated:
+            lvpStats.allocs++;
+            break;
+        case LvpTrainOutcome::Evicted:
+            lvpStats.allocs++;
+            lvpStats.evictions++;
+            break;
+        case LvpTrainOutcome::MismatchReset:
+            lvpStats.confResets++;
+            break;
+        case LvpTrainOutcome::MismatchDecrement:
+            lvpStats.confDecrements++;
+            break;
+        case LvpTrainOutcome::Match:
+            break;
     }
 }
 

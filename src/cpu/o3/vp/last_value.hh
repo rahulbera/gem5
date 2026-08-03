@@ -28,8 +28,9 @@ class LastValueVP : public BaseValuePredictor
     LastValueVP(const LastValueVPParams &p);
 
   protected:
-    std::optional<RegVal> predictImpl(Addr key) override;
-    void trainImpl(Addr key, RegVal actualValue) override;
+    VpPredictResult predictImpl(const VpLookupContext &ctx) override;
+    void trainImpl(const VpLookupContext &ctx, RegVal actualValue,
+                   uint64_t token) override;
 
   private:
     LvpTable table;

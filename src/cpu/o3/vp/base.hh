@@ -7,6 +7,9 @@
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/limits.hh"
+#include "cpu/o3/vp/vp_history.hh"
+#include "cpu/o3/vp/vp_types.hh"
 #include "sim/sim_object.hh"
 
 namespace gem5
@@ -74,6 +77,40 @@ class BaseValuePredictor : public SimObject
      *  class) restore it here on any pipeline squash. LVP ignores it. */
     virtual void notifyPipelineSquash() {}
 
+    /** Per-predictor knob: train() is called at commit instead of
+     *  writeback (VTAGE-class predictors; see the verify-site
+     *  correctiveReset() below, which is only meaningful in this
+     *  mode). Default false -- LVP keeps writeback training and its
+     *  published behavior is unaffected. */
+    virtual bool
+    trainsAtCommit() const
+    {
+        return false;
+    }
+
+    /** Per-predictor knob: this predictor folds the fetch-time history
+     *  snapshot (VpLookupContext::hist) into its lookup (VTAGE-class).
+     *  Default false -- the pipeline only maintains/restores the
+     *  history subsystem below when some attached predictor sets
+     *  this; LVP configurations are unaffected. */
+    virtual bool
+    usesHistory() const
+    {
+        return false;
+    }
+
+    /** Verify-site no-livelock exception for trainAtCommit predictors
+     *  (docs/superpowers/specs/2026-08-03-vtage-design.md, "Verify"): a
+     *  delivered-and-wrong prediction squashes inclusively and never
+     *  retires, so a commit-only trainer would never correct its
+     *  entry. Resets confidence through the token (tag-checked so a
+     *  reallocated entry is not hijacked); no value write, no
+     *  allocation. No-op for predictors that keep writeback
+     *  training. */
+    virtual void
+    correctiveReset(uint64_t)
+    {}
+
     /** Scope knob: loads only (default) vs all eligible instructions. */
     bool
     onlyLoads() const
@@ -85,11 +122,38 @@ class BaseValuePredictor : public SimObject
      *  IEW non-load site can pre-filter before reading the dest reg. */
     bool inScope(const DynInstPtr &inst) const;
 
+    /**
+     * History-subsystem thin wrappers (framework-level, predictor-
+     * agnostic; docs/superpowers/specs/2026-08-03-vtage-design.md,
+     * "History Subsystem"). Nothing calls these yet -- the pipeline
+     * wiring (fetch-side notify, per-inst snapshot stamping, redirect
+     * restores) is Task 3; only predictors with usesHistory() will
+     * ever observe non-default history state.
+     */
+
+    /** Fetch-side control-flow notification for thread tid: a
+     *  conditional branch shifts its predicted direction into ghr;
+     *  every taken control transfer shifts target's low bits into
+     *  path (masked to historyPathBits wide). */
+    void notifyControlFlow(ThreadID tid, bool isCond, bool predTaken,
+                           Addr target);
+
+    /** Stamp thread tid's current history state onto inst as its
+     *  fetch-time snapshot. */
+    void snapshotFor(const DynInstPtr &inst) const;
+
+    /** Restore thread tid's history register to a prior snapshot (any
+     *  fetch redirect; restore-site rules live with their pipeline
+     *  call sites, not here). */
+    void restoreHistory(ThreadID tid, const VpHistSnapshot &snap);
+
   protected:
-    /** Algorithm lookup over the folded key. */
-    virtual std::optional<RegVal> predictImpl(Addr key) = 0;
-    /** Algorithm training over the folded key. */
-    virtual void trainImpl(Addr key, RegVal actualValue) = 0;
+    /** Algorithm lookup over the lookup context. */
+    virtual VpPredictResult predictImpl(const VpLookupContext &ctx) = 0;
+    /** Algorithm training over the lookup context and the provider
+     *  token stamped by the matching predict() (0 if none/stale). */
+    virtual void trainImpl(const VpLookupContext &ctx, RegVal actualValue,
+                           uint64_t token) = 0;
 
     /** Hard eligibility rules: single scalar integer, non-fixed-mapping
      *  destination; not serializing / barrier / non-speculative /
@@ -100,6 +164,16 @@ class BaseValuePredictor : public SimObject
     /** Subsumed by the integer-only rule today; retained so the
      *  interface is stable when FP/vector support lands. */
     const bool _scalarOnly;
+    /** Path-history register width (ValuePredictor.py's
+     *  historyPathBits); passed to VpHistory::takenTarget() by
+     *  notifyControlFlow(). Only consumed by history-aware
+     *  predictors. */
+    const unsigned _historyPathBits;
+
+    /** VTAGE-class predictors' only speculative state: per-thread
+     *  branch/path history (vp_history.hh). Idle -- never advanced or
+     *  read -- when no attached predictor sets usesHistory(). */
+    VpHistory vpHist[MaxThreads];
 
     struct VpStats : public statistics::Group
     {

@@ -98,6 +98,26 @@ enum class VtageTrainOutcome
 };
 
 /**
+ * Read-only view of what a lookup()/train() call resolves as its
+ * provider, without requiring the caller to understand the token's
+ * internal packing (design doc's "opaque 64 bits" -- the framework/
+ * base class never decodes a token; only VtageVP, which owns this
+ * core, does, via peekProvider() below).
+ */
+struct VtageProviderPeek
+{
+    /** Biased rank: 1 = VT0, 2..(1+numTagged) = VT1..VTnumTagged --
+     *  the same encoding as the token's rank field (never 0: VT0 is
+     *  the ultimate fallback). Wrapper stats index per-component
+     *  vectors as rank - 1. */
+    unsigned rank = 1;
+    /** The resolved provider's confidence counter is already at the
+     *  saturating max (2^confBits - 1): no further FPC transition is
+     *  possible on a correct update. */
+    bool saturated = false;
+};
+
+/**
  * The params-free VTAGE core: VT0 (tagless base) plus VT1..VTnumTagged
  * (PC x global-history tagged components), TAGE-style longest-match
  * selection, Forward Probabilistic Counters, and ITTAGE-style
@@ -141,6 +161,24 @@ class VtageTables
      *  No value write, no allocation. Returns false on a stale or
      *  absent (token == 0) token; the caller counts that. */
     bool correctiveReset(uint64_t token);
+
+    /** Read-only preview of the provider a train(pc, upc, h, token,
+     *  ...) call would resolve: the token's own rank if live and
+     *  tag-checked, else the same longest-match recompute train()
+     *  falls back to for a stale/absent token -- mirrors train()'s
+     *  own resolution logic exactly, but performs no mutation. Added
+     *  (design doc, "Statistics") so wrapper stats (VTAGE SimObject's
+     *  per-component provider/FPC accounting) can classify an
+     *  about-to-happen train() outcome without duplicating the
+     *  token's internal packing themselves, and without changing
+     *  train()'s own GTest-pinned outcome semantics. Call immediately
+     *  before the matching train() with identical arguments: no
+     *  table mutation happens between the two in the wrapper's
+     *  usage, so the peek and the following train() stay
+     *  consistent. */
+    VtageProviderPeek peekProvider(Addr pc, MicroPC upc,
+                                   const VpHistSnapshot &h,
+                                   uint64_t token) const;
 
   private:
     /** VT0 entry: tagless, no allocation, no usefulness bit. */

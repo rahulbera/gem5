@@ -45,7 +45,7 @@ namespace into objects with :func:`make_memory`, :func:`cache_kwargs` and
 checkpoint, the region lengths) stay in the driver that owns them.
 """
 
-from m5.objects import LastValueVP, MemRenamePredictor
+from m5.objects import LastValueVP, MemRenamePredictor, VtageVP
 
 from gem5.components.memory.single_channel import (
     DIMM_DDR5_4400,
@@ -187,11 +187,12 @@ def add_common_args(
     garfield.add_argument(
         "--use-vp",
         type=str,
-        choices=["lvp"],
+        choices=["lvp", "vtage"],
         default=None,
         metavar="TYPE",
         help="Garfield: attach a value predictor of the given type "
-        "(lvp = last-value predictor). Absent = VP disabled (NULL).",
+        "(lvp = last-value predictor; vtage = VTAGE, PC x history "
+        "tagged prediction). Absent = VP disabled (NULL).",
     )
     garfield.add_argument(
         "--vp-all-insts",
@@ -227,6 +228,13 @@ def add_common_args(
         action="store_true",
         help="Decrement (rather than reset) VP confidence on a value "
         "mismatch, clamped below the confidence threshold.",
+    )
+    garfield.add_argument(
+        "--vtage-conf-threshold",
+        type=int,
+        default=7,
+        help="VTAGE minimum confidence required to predict (minimum "
+        "1; HPCA'14 default is saturation, 7).",
     )
     return parser
 
@@ -269,6 +277,11 @@ def make_vp(args):
     """The value predictor selected by --use-vp, or None."""
     if args.use_vp is None:
         return None
+    if args.use_vp == "vtage":
+        return VtageVP(
+            onlyLoads=not args.vp_all_insts,
+            confThreshold=args.vtage_conf_threshold,
+        )
     assert args.use_vp == "lvp"
     return LastValueVP(
         onlyLoads=not args.vp_all_insts,

@@ -271,6 +271,37 @@ VtageTables::correctiveReset(uint64_t token)
     return true;
 }
 
+VtageProviderPeek
+VtageTables::peekProvider(Addr pc, MicroPC upc, const VpHistSnapshot &h,
+                          uint64_t token) const
+{
+    // Mirrors train()'s own token-resolution logic (live-token
+    // decode, tag-checked, else a longest-match recompute) exactly,
+    // read-only.
+    if (token != 0) {
+        const UnpackedToken u = unpackToken(token);
+        if (u.rank == 1) {
+            if (u.index < baseEntries) {
+                return VtageProviderPeek{1, base[u.index].c >= confMax};
+            }
+        } else if (u.rank >= 2) {
+            const unsigned bank = u.rank - 1;
+            if (bank <= numTagged && u.index < taggedEntries) {
+                const TaggedEntry &e = tagged[bank - 1][u.index];
+                if (e.valid && e.tag == u.tag) {
+                    return VtageProviderPeek{u.rank, e.c >= confMax};
+                }
+            }
+        }
+    }
+    const Provider p = findProvider(pc, upc, h);
+    if (p.bank == 0) {
+        return VtageProviderPeek{1, base[p.index].c >= confMax};
+    }
+    const TaggedEntry &e = tagged[p.bank - 1][p.index];
+    return VtageProviderPeek{p.bank + 1, e.c >= confMax};
+}
+
 std::vector<VtageTrainOutcome>
 VtageTables::train(Addr pc, MicroPC upc, const VpHistSnapshot &h,
                    uint64_t token, RegVal actual)

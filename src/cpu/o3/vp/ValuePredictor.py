@@ -46,3 +46,52 @@ class LastValueVP(BaseValuePredictor):
         "Decrement (rather than reset to zero) confidence on a value "
         "mismatch, clamped below the confidence threshold",
     )
+
+
+class VtageVP(BaseValuePredictor):
+    type = "VtageVP"
+    cxx_class = "gem5::o3::VtageVP"
+    cxx_header = "cpu/o3/vp/vtage.hh"
+
+    baseEntries = Param.Unsigned(
+        8192, "VT0 (tagless, PC-indexed base component) entries"
+    )
+    taggedEntries = Param.Unsigned(
+        1024,
+        "Entries per tagged component (VT1..VTnumTagged); all tagged "
+        "components share this size",
+    )
+    numTagged = Param.Unsigned(
+        6,
+        "Number of tagged components (VT1..VTnumTagged). The biased-"
+        "rank token field packs 0 = none, 1 = VT0, 2..(1+numTagged) = "
+        "VT1..VTnumTagged, so this must be <= 7",
+    )
+    historyLengths = VectorParam.Unsigned(
+        [2, 4, 8, 16, 32, 64],
+        "Per-tagged-component history length L(i), shortest to "
+        "longest; size must equal numTagged",
+    )
+    baseTagBits = Param.Unsigned(
+        12,
+        "Tagged component 1's tag width; component i's (1-based) tag "
+        "width is baseTagBits + i",
+    )
+    confBits = Param.Unsigned(
+        3, "Saturating confidence-counter width, every component"
+    )
+    confThreshold = Param.Unsigned(
+        7,
+        "Minimum confidence required to predict (minimum 1; 0 would "
+        "make the verify-site corrective reset unable to leave an "
+        "entry below threshold -- squash-livelock hazard -- and is "
+        "rejected)",
+    )
+    fpcVector = VectorParam.Float(
+        [1, 1.0 / 16, 1.0 / 16, 1.0 / 16, 1.0 / 16, 1.0 / 32, 1.0 / 32],
+        "Forward Probabilistic Counters: v[i] is the probability that "
+        "the i -> i+1 confidence transition fires on a correct "
+        "update; size must equal one per forward transition (2^"
+        "confBits - 1). The reset to 0 on a wrong update is never "
+        "probabilistic",
+    )

@@ -45,7 +45,13 @@ namespace into objects with :func:`make_memory`, :func:`cache_kwargs` and
 checkpoint, the region lengths) stay in the driver that owns them.
 """
 
-from m5.objects import LastValueVP, MemRenamePredictor, VtageVP
+import argparse
+
+from m5.objects import (
+    LastValueVP,
+    MemRenamePredictor,
+    VtageVP,
+)
 
 from gem5.components.memory.single_channel import (
     DIMM_DDR5_4400,
@@ -236,7 +242,38 @@ def add_common_args(
         help="VTAGE minimum confidence required to predict (minimum "
         "1; HPCA'14 default is saturation, 7).",
     )
+    garfield.add_argument(
+        "--vtage-hist-lengths",
+        type=_vtage_hist_lengths,
+        default=None,
+        metavar="L1,L2,...",
+        help="VTAGE per-tagged-component history lengths, shortest to "
+        "longest (comma-separated, each in [1, 128], strictly "
+        "increasing); also sets numTagged to the list's length. "
+        "Absent = the HPCA'14 default geometry (2,4,8,16,32,64).",
+    )
     return parser
+
+
+def _vtage_hist_lengths(text):
+    """Parse --vtage-hist-lengths: comma-separated ints, each in
+    [1, 128], strictly increasing."""
+    try:
+        lengths = [int(tok) for tok in text.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected comma-separated integers, got {text!r}"
+        )
+    for length in lengths:
+        if not 1 <= length <= 128:
+            raise argparse.ArgumentTypeError(
+                f"history length {length} outside [1, 128]"
+            )
+    if any(b <= a for a, b in zip(lengths, lengths[1:])):
+        raise argparse.ArgumentTypeError(
+            f"history lengths must be strictly increasing, got {text!r}"
+        )
+    return lengths
 
 
 def make_memory(args):
@@ -278,9 +315,14 @@ def make_vp(args):
     if args.use_vp is None:
         return None
     if args.use_vp == "vtage":
+        kwargs = {}
+        if args.vtage_hist_lengths is not None:
+            kwargs["historyLengths"] = args.vtage_hist_lengths
+            kwargs["numTagged"] = len(args.vtage_hist_lengths)
         return VtageVP(
             onlyLoads=not args.vp_all_insts,
             confThreshold=args.vtage_conf_threshold,
+            **kwargs,
         )
     assert args.use_vp == "lvp"
     return LastValueVP(

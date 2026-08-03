@@ -90,16 +90,16 @@ TEST(VpHistory, GhrNewestBitOrdering)
     h.branchShift(false);
     // Newest (most recently shifted) direction is bit 0; the earlier
     // one has moved up to bit 1.
-    EXPECT_EQ(h.state.ghr & 0x1ull, 0ull);
-    EXPECT_EQ((h.state.ghr >> 1) & 0x1ull, 1ull);
-    EXPECT_EQ(h.state.ghr, 0x2ull);
+    EXPECT_EQ(h.state.ghr0 & 0x1ull, 0ull);
+    EXPECT_EQ((h.state.ghr0 >> 1) & 0x1ull, 1ull);
+    EXPECT_EQ(h.state.ghr0, 0x2ull);
 
     // A third shift moves both prior bits up one more position.
     h.branchShift(true);
-    EXPECT_EQ(h.state.ghr & 0x1ull, 1ull);
-    EXPECT_EQ((h.state.ghr >> 1) & 0x1ull, 0ull);
-    EXPECT_EQ((h.state.ghr >> 2) & 0x1ull, 1ull);
-    EXPECT_EQ(h.state.ghr, 0x5ull);
+    EXPECT_EQ(h.state.ghr0 & 0x1ull, 1ull);
+    EXPECT_EQ((h.state.ghr0 >> 1) & 0x1ull, 0ull);
+    EXPECT_EQ((h.state.ghr0 >> 2) & 0x1ull, 1ull);
+    EXPECT_EQ(h.state.ghr0, 0x5ull);
 }
 
 // takenTarget folds low target-PC bits in at the bottom (3 bits per
@@ -141,12 +141,41 @@ TEST(VpHistory, SnapshotRestoreRoundtrip)
     h.branchShift(true);
     h.takenTarget(0x400898, 16);
     h.branchShift(true);
-    ASSERT_NE(h.state.ghr, snap.ghr);
+    ASSERT_NE(h.state.ghr0, snap.ghr0);
     ASSERT_NE(h.state.path, snap.path);
 
     h.restore(snap);
-    EXPECT_EQ(h.state.ghr, snap.ghr);
+    EXPECT_EQ(h.state.ghr0, snap.ghr0);
     EXPECT_EQ(h.state.path, snap.path);
+}
+
+// The GHR is 128 bits across two 64-bit words: every branchShift must
+// carry ghr0 bit 63 into ghr1 bit 0 (history bit 64). A single taken
+// bit shifted up by 64 subsequent not-taken shifts must land exactly
+// there -- read back through histBit(), the same accessor the
+// VtageTables fold uses to span the word boundary.
+TEST(VpHistory, GhrShiftCrossesWordBoundary)
+{
+    VpHistory h;
+    h.branchShift(true); // History bit 0.
+    for (int i = 0; i < 64; i++) {
+        h.branchShift(false); // Each pushes it up one position.
+    }
+    // The taken bit is now history bit 64 == ghr1 bit 0; ghr0 holds
+    // only the 64 not-taken bits shifted in after it.
+    EXPECT_EQ(h.state.ghr0, 0ull);
+    EXPECT_EQ(h.state.ghr1, 1ull);
+    EXPECT_EQ(histBit(h.state, 64), 1ull);
+    EXPECT_EQ(histBit(h.state, 63), 0ull);
+    EXPECT_EQ(histBit(h.state, 65), 0ull);
+
+    // One more shift moves it to history bit 65 (ghr1 bit 1) while
+    // the newly shifted-in direction lands at bit 0.
+    h.branchShift(true);
+    EXPECT_EQ(histBit(h.state, 65), 1ull);
+    EXPECT_EQ(histBit(h.state, 64), 0ull);
+    EXPECT_EQ(histBit(h.state, 0), 1ull);
+    EXPECT_EQ(h.state.ghr1, 2ull);
 }
 
 TEST(VtageTables, ColdLookupFallsBackToVT0)
@@ -162,7 +191,7 @@ TEST(VtageTables, ColdLookupFallsBackToVT0)
 TEST(VtageTables, SameSnapshotGivesSameToken)
 {
     VtageTables t(comboConfig(), constRng(0.0));
-    VpHistSnapshot h{0x1234, 7};
+    VpHistSnapshot h{0x1234, 0, 7};
     auto r1 = t.lookup(0x400, 0, h);
     auto r2 = t.lookup(0x400, 0, h);
     EXPECT_EQ(r1.token, r2.token);
@@ -205,12 +234,12 @@ TEST(VtageTables, LongestMatchWinsThenBitFlipsRevealShorterProviders)
 
     // Flip bit 3 (< L=4, L=8; NOT < L=2): bank 3 and bank 2 (virgin
     // anyway) miss, bank 1 (L = 2) still matches -> its value.
-    const VpHistSnapshot hBit3{h0.ghr ^ (1ull << 3), 0};
+    const VpHistSnapshot hBit3{h0.ghr0 ^ (1ull << 3), 0};
     EXPECT_EQ(t.lookup(pc, 0, hBit3).value, 222u);
 
     // Flip bit 0 (< every configured L): every tagged bank misses ->
     // falls all the way back to VT0.
-    const VpHistSnapshot hBit0{h0.ghr ^ (1ull << 0), 0};
+    const VpHistSnapshot hBit0{h0.ghr0 ^ (1ull << 0), 0};
     EXPECT_EQ(t.lookup(pc, 0, hBit0).value, 111u);
 }
 
@@ -267,7 +296,7 @@ TEST(VtageTables, MicroOpDoesNotAliasNeighborPc)
 {
     const Addr pcEven = 0x400890; // pcEven >> 2 is even.
     const Addr pcOdd = 0x400894;  // pcOdd >> 2 is odd.
-    const VpHistSnapshot h{0x2b, 0x13}; // Equal nonzero history.
+    const VpHistSnapshot h{0x2b, 0, 0x13}; // Equal nonzero history.
 
     // Fresh table per pair: train key A to 111 and key B to 222 up
     // to confidence, then check full separation.
@@ -361,10 +390,10 @@ TEST(VtageTables, OldestHistoryBitReachesFold)
         const auto bank3Tok = t.lookup(pc, 0, hBase).token;
         EXPECT_NE(bank3Tok, virginTok);
 
-        const VpHistSnapshot hFlip7{hBase.ghr ^ (1ull << 7), 0};
+        const VpHistSnapshot hFlip7{hBase.ghr0 ^ (1ull << 7), 0};
         EXPECT_NE(t.lookup(pc, 0, hFlip7).token, bank3Tok);
 
-        const VpHistSnapshot hFlip8{hBase.ghr ^ (1ull << 8), 0};
+        const VpHistSnapshot hFlip8{hBase.ghr0 ^ (1ull << 8), 0};
         EXPECT_EQ(t.lookup(pc, 0, hFlip8).token, bank3Tok);
     }
     {
@@ -377,9 +406,39 @@ TEST(VtageTables, OldestHistoryBitReachesFold)
         const auto bank1Tok = t.lookup(pc, 0, hBase).token;
         EXPECT_NE(bank1Tok, virginTok);
 
-        const VpHistSnapshot hFlip1{hBase.ghr ^ (1ull << 1), 0};
+        const VpHistSnapshot hFlip1{hBase.ghr0 ^ (1ull << 1), 0};
         EXPECT_NE(t.lookup(pc, 0, hFlip1).token, bank1Tok);
     }
+}
+
+// History bits beyond the first word must reach the fold: a component
+// with L = 100 covers history bits 0..99, so flipping bit 99 (ghr1
+// bit 35) must change that component's index/tag (a lookup that hit
+// it now misses), while flipping bit 100 -- outside the window --
+// must not.
+TEST(VtageTables, LongHistoryBitsBeyond64ReachFold)
+{
+    VtageConfig c = comboConfig();
+    c.historyLengths = {2, 4, 100};
+    VtageTables t(c, constRng(0.9));
+    const Addr pc = 0x1400;
+    // History bit 99 set: the oldest bit of L = 100's window.
+    const VpHistSnapshot hBase{0, 1ull << 35, 0};
+
+    const auto virginTok = t.lookup(pc, 0, hBase).token;
+    // 3 virgin candidates, r = 0.9 picks the last (bank 3, L = 100).
+    t.train(pc, 0, hBase, virginTok, 777);
+    const auto bank3Tok = t.lookup(pc, 0, hBase).token;
+    EXPECT_NE(bank3Tok, virginTok);
+
+    // Clear bit 99: inside the L = 100 window -> bank 3 misses (falls
+    // back to VT0's own token).
+    const VpHistSnapshot hFlip99{0, hBase.ghr1 ^ (1ull << 35), 0};
+    EXPECT_NE(t.lookup(pc, 0, hFlip99).token, bank3Tok);
+
+    // Set bit 100: outside the window -> bank 3 still hits.
+    const VpHistSnapshot hFlip100{0, hBase.ghr1 ^ (1ull << 36), 0};
+    EXPECT_EQ(t.lookup(pc, 0, hFlip100).token, bank3Tok);
 }
 
 // Regression pins for the fold/index/tag/pack recurrences: exact
@@ -394,10 +453,51 @@ TEST(VtageTables, GoldenTokens)
     VtageTables t(VtageConfig{}, constRng(0.0));
     EXPECT_EQ(t.lookup(0x400000, 0, {}).token, 1ull);
     EXPECT_EQ(t.lookup(0x400000, 1, {}).token, 17ull);
-    EXPECT_EQ(
-        t.lookup(0x400004, 0, VpHistSnapshot{0x123456789abcdef0ull, 0x1234})
-            .token,
-        65ull);
+    EXPECT_EQ(t.lookup(0x400004, 0,
+                       VpHistSnapshot{0x123456789abcdef0ull, 0, 0x1234})
+                  .token,
+              65ull);
+}
+
+// The token's fixed 20-bit tag field must hold the widest legal tag:
+// numTagged = 7 makes component 7's tag baseTagBits (12) + 7 = 19
+// bits wide. Construct that geometry (taggedEntries = 256 keeps
+// numTagged < log2(taggedEntries)), allocate into the topmost
+// component under a full 128-bit history, and round-trip its token
+// through every consumer: lookup restamps it, peekProvider decodes
+// biased rank 8, train resolves it live (no StaleTokenRecomputed),
+// correctiveReset tag-matches it.
+TEST(VtageTables, Rank7TwentyBitTagTokenRoundTrips)
+{
+    VtageConfig c;
+    c.baseEntries = 16;
+    c.taggedEntries = 256;
+    c.numTagged = 7;
+    c.historyLengths = {2, 5, 11, 26, 58, 90, 128};
+    c.baseTagBits = 12;
+    c.confBits = 3;
+    c.confThreshold = 7;
+    c.fpcVector = {1, 1. / 16, 1. / 16, 1. / 16, 1. / 16, 1. / 32, 1. / 32};
+    c.pathBits = 16;
+    VtageTables t(c, constRng(0.99));
+
+    const Addr pc = 0x400890;
+    const VpHistSnapshot h{0xdeadbeefcafef00dull, 0x123456789abcdef0ull,
+                           0x1a2b};
+    const auto virginTok = t.lookup(pc, 0, h).token;
+    // 7 virgin candidates, r = 0.99 picks the last (bank 7, L = 128).
+    t.train(pc, 0, h, virginTok, 777);
+
+    const auto tok = t.lookup(pc, 0, h).token;
+    EXPECT_NE(tok, virginTok);
+    EXPECT_EQ(t.lookup(pc, 0, h).value, 777u);
+    EXPECT_EQ(t.peekProvider(pc, 0, h, tok).rank, 8u); // Biased VT7.
+
+    // A live-token train: no StaleTokenRecomputed -- the unpacked
+    // {rank, index, tag} matched the allocated entry exactly.
+    EXPECT_EQ(t.train(pc, 0, h, tok, 777),
+              Outcomes{VtageTrainOutcome::CorrectInc});
+    EXPECT_TRUE(t.correctiveReset(tok));
 }
 
 TEST(VtageTables, ThresholdGatingDefaultSaturation)
@@ -527,10 +627,10 @@ TEST(VtageTables, AllocationChoiceViaScriptedRngPicksMiddleCandidate)
     EXPECT_NE(providerTok, virginTok);
     EXPECT_EQ(t.lookup(pc, 0, h0).value, 42u);
 
-    const VpHistSnapshot hBit2{h0.ghr ^ (1ull << 2), 0};
+    const VpHistSnapshot hBit2{h0.ghr0 ^ (1ull << 2), 0};
     EXPECT_EQ(t.lookup(pc, 0, hBit2).token, virginTok); // Falls to VT0.
 
-    const VpHistSnapshot hBit4{h0.ghr ^ (1ull << 4), 0};
+    const VpHistSnapshot hBit4{h0.ghr0 ^ (1ull << 4), 0};
     EXPECT_EQ(t.lookup(pc, 0, hBit4).token, providerTok); // Unaffected.
 }
 
@@ -549,7 +649,7 @@ TEST(VtageTables, AllocationSkipsCandidateWithUsefulBitSet)
 
     // Bank 1 (L = 2) is reachable again at ghr ^ bit3 (outside its
     // window, inside bank 3's -- see the LongestMatchWins test).
-    const VpHistSnapshot hBit3{h0.ghr ^ (1ull << 3), 0};
+    const VpHistSnapshot hBit3{h0.ghr0 ^ (1ull << 3), 0};
     const auto bank1Tok = t.lookup(pc, 0, hBit3).token;
     ASSERT_EQ(t.lookup(pc, 0, hBit3).value, 222u);
 
@@ -584,7 +684,7 @@ TEST(VtageTables, AllocationSkipsCandidateWithUsefulBitSet)
     // vanishes when ghr bit 3 flips (inside L = 4's window, outside
     // L = 2's), demoting pc2 back to its VT0 token; a (wrongly)
     // allocated bank-1 entry would survive that flip and still hit.
-    const VpHistSnapshot hProbeBit3{hProbe.ghr ^ (1ull << 3), 0};
+    const VpHistSnapshot hProbeBit3{hProbe.ghr0 ^ (1ull << 3), 0};
     EXPECT_EQ(t.lookup(pc2, 0, hProbeBit3).token, probeVirginTok);
 }
 

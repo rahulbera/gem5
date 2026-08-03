@@ -249,14 +249,15 @@ class VtageTables
      *  replayed `origLength` times from a zeroed register: the
      *  fold-on-demand adaptation
      *  docs/superpowers/specs/2026-08-03-vtage-design.md calls for.
-     *  Folds ghr[0:origLength) (bit 0 = newest) into compLength bits.
+     *  Folds ghr[0:origLength) (bit 0 = newest; bits 64..127 read
+     *  from ghr1 via histBit(), vp_history.hh) into compLength bits.
      *  Because this replay always starts from an all-zero register
      *  and runs for exactly origLength steps, the bit that "ages
      *  out" of the incremental update (h[origLength]) is always the
      *  zero-filled placeholder for the entire replay, so that XOR
      *  term is elided below (XORing with 0 is a no-op) rather than
      *  transcribed literally from tage_base.hh. */
-    uint64_t foldHistory(uint64_t ghr, unsigned origLength,
+    uint64_t foldHistory(const VpHistSnapshot &h, unsigned origLength,
                          unsigned compLength) const;
 
     /** Mirrors gem5 TAGE's F() path-hash (tage_base.cc), adapted to
@@ -310,10 +311,13 @@ class VtageTables
 
     /** Reserved token field widths (packing is internal: the token is
      *  just an opaque 64b carrier sized to fit the widest rank/index/
-     *  tag this configuration can produce). */
+     *  tag any legal configuration can produce). The tag field is a
+     *  fixed 20 bits: the widest legal tag is baseTagBits (12) +
+     *  numTagged (7) = 19 bits, and the constructor rejects any
+     *  configuration whose widest tag exceeds the field. */
     static constexpr unsigned rankFieldBits = 4;
+    static constexpr unsigned tagFieldBits = 20;
     const unsigned indexFieldBits;
-    const unsigned tagFieldBits;
 
     std::function<double()> rng;
 

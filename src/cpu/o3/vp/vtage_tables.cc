@@ -27,7 +27,6 @@ VtageTables::VtageTables(const VtageConfig &cfg, std::function<double()> rng)
       logTaggedEntries(cfg.taggedEntries > 0 ? floorLog2(cfg.taggedEntries)
                                              : 0),
       indexFieldBits(std::max(logBaseEntries, logTaggedEntries)),
-      tagFieldBits(cfg.baseTagBits + cfg.numTagged),
       rng(std::move(rng)),
       base(baseEntries),
       tagged(numTagged, std::vector<TaggedEntry>(taggedEntries))
@@ -51,9 +50,9 @@ VtageTables::VtageTables(const VtageConfig &cfg, std::function<double()> rng)
              "(%u)",
              cfg.historyLengths.size(), cfg.numTagged);
     for (unsigned length : cfg.historyLengths) {
-        fatal_if(length == 0 || length > 64,
-                 "VTAGE history length (%u) must be in [1, 64]: ghr is "
-                 "a 64-bit snapshot",
+        fatal_if(length == 0 || length > 128,
+                 "VTAGE history length (%u) must be in [1, 128]: ghr "
+                 "is a 128-bit (two-word) snapshot",
                  length);
     }
     fatal_if(cfg.confBits == 0 || cfg.confBits > 16,
@@ -87,6 +86,13 @@ VtageTables::VtageTables(const VtageConfig &cfg, std::function<double()> rng)
     fatal_if(cfg.numTagged >= logTaggedEntries,
              "VTAGE numTagged (%u) must be < log2(taggedEntries) (%u)",
              cfg.numTagged, logTaggedEntries);
+    // The token's tag field is a fixed 20 bits (vtage_tables.hh);
+    // the widest tag this configuration can produce is component
+    // numTagged's, baseTagBits + numTagged bits.
+    fatal_if(cfg.baseTagBits + cfg.numTagged > tagFieldBits,
+             "VTAGE widest tag (baseTagBits %u + numTagged %u) exceeds "
+             "the %u-bit token tag field",
+             cfg.baseTagBits, cfg.numTagged, tagFieldBits);
     fatal_if(rankFieldBits + indexFieldBits + tagFieldBits > 64,
              "VTAGE token geometry does not fit 64 bits: rank %u + "
              "index %u + tag %u",
@@ -118,7 +124,7 @@ VtageTables::shiftedPcOf(Addr pc, MicroPC upc) const
 }
 
 uint64_t
-VtageTables::foldHistory(uint64_t ghr, unsigned origLength,
+VtageTables::foldHistory(const VpHistSnapshot &h, unsigned origLength,
                          unsigned compLength) const
 {
     if (compLength == 0) {
@@ -128,8 +134,9 @@ VtageTables::foldHistory(uint64_t ghr, unsigned origLength,
     for (unsigned i = 0; i < origLength; i++) {
         // Bits replay oldest-first (chronological insertion order):
         // ghr bit 0 is newest, so the bit inserted at step i is ghr
-        // bit (origLength - 1 - i).
-        const uint64_t bit = (ghr >> (origLength - 1 - i)) & 1ULL;
+        // bit (origLength - 1 - i) -- read through histBit()
+        // (vp_history.hh), which spans the ghr0/ghr1 word boundary.
+        const uint64_t bit = histBit(h, origLength - 1 - i);
         comp = (comp << 1) | bit;
         comp ^= (comp >> compLength);
         comp &= (1ULL << compLength) - 1;
@@ -157,7 +164,7 @@ VtageTables::computeIndex(uint64_t shiftedPc, const VpHistSnapshot &h,
 {
     const unsigned length = historyLengths[bank - 1];
     const unsigned hlen = std::min(length, pathBits);
-    const uint64_t idxFold = foldHistory(h.ghr, length, logTaggedEntries);
+    const uint64_t idxFold = foldHistory(h, length, logTaggedEntries);
     const uint64_t pathFold = pathHash(h.path, hlen, bank);
     const int shiftAmt =
         std::abs(static_cast<int>(logTaggedEntries) - static_cast<int>(bank)) +
@@ -173,8 +180,8 @@ VtageTables::computeTag(uint64_t shiftedPc, const VpHistSnapshot &h,
 {
     const unsigned length = historyLengths[bank - 1];
     const unsigned width = baseTagBits + bank;
-    const uint64_t fold0 = foldHistory(h.ghr, length, width);
-    const uint64_t fold1 = foldHistory(h.ghr, length, width - 1);
+    const uint64_t fold0 = foldHistory(h, length, width);
+    const uint64_t fold1 = foldHistory(h, length, width - 1);
     const uint64_t tag = shiftedPc ^ fold0 ^ (fold1 << 1);
     return tag & ((1ULL << width) - 1);
 }

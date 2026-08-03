@@ -21,14 +21,25 @@ namespace o3
  */
 struct VpHistSnapshot
 {
-    /** Branch-direction history; bit 0 is the newest shifted-in
-     *  direction. 64 bits wide -- VTAGE's longest configured history
-     *  length (docs/superpowers/specs/2026-08-03-vtage-design.md,
+    /** Branch-direction history, 128 bits across two 64-bit words;
+     *  ghr0 bit 0 is the newest shifted-in direction, ghr0 bit 63
+     *  carries into ghr1 bit 0 (history bits 64..127) -- 128 is
+     *  VTAGE's longest configurable history length
+     *  (docs/superpowers/specs/2026-08-03-vtage-design.md,
      *  "Data Structures"). */
-    uint64_t ghr = 0;
+    uint64_t ghr0 = 0;
+    /** History bits 64..127 (bit i of ghr1 = history bit 64 + i). */
+    uint64_t ghr1 = 0;
     /** Path history: low target-PC bits of taken control transfers. */
     uint16_t path = 0;
 };
+
+/** Read GHR bit i (0 = newest, valid up to 127) of a snapshot. */
+inline uint64_t
+histBit(const VpHistSnapshot &h, unsigned i)
+{
+    return ((i < 64) ? (h.ghr0 >> i) : (h.ghr1 >> (i - 64))) & 1ULL;
+}
 
 /**
  * Fetch-side history register pair. `branchShift`/`takenTarget` push
@@ -41,11 +52,13 @@ struct VpHistory
 {
     VpHistSnapshot state;
 
-    /** Shift a conditional branch's predicted direction into ghr. */
+    /** Shift a conditional branch's predicted direction into ghr:
+     *  ghr0 bit 63 carries into ghr1 bit 0 (history bit 64). */
     void
     branchShift(bool taken)
     {
-        state.ghr = (state.ghr << 1) | taken;
+        state.ghr1 = (state.ghr1 << 1) | (state.ghr0 >> 63);
+        state.ghr0 = (state.ghr0 << 1) | taken;
     }
 
     /** Shift a taken control transfer's low target-PC bits into path,

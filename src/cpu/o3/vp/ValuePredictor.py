@@ -70,7 +70,8 @@ class VtageVP(BaseValuePredictor):
     historyLengths = VectorParam.Unsigned(
         [2, 4, 8, 16, 32, 64],
         "Per-tagged-component history length L(i), shortest to "
-        "longest; size must equal numTagged",
+        "longest; size must equal numTagged, each length in [1, 128] "
+        "(the history snapshot is 128 bits)",
     )
     baseTagBits = Param.Unsigned(
         12,

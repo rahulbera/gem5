@@ -364,6 +364,10 @@ class Rename
     /** Garfield VP: value predictor (null = VP disabled). */
     BaseValuePredictor *valuePred = nullptr;
 
+    /** Flipped consumption ladder: VP claims first, MRN value-forward
+     *  only takes loads VP left unclaimed. */
+    bool vpBeforeMrn = false;
+
     /** Pointer to main time buffer used for backwards communication. */
     TimeBuffer<TimeStruct> *timeBuffer;
 

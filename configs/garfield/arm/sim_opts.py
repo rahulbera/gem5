@@ -150,6 +150,13 @@ def add_common_args(
         help="MRN minimum confidence required to predict.",
     )
     garfield.add_argument(
+        "--vp-before-mrn",
+        action="store_true",
+        help="Flip the rename consumption ladder: VP claims first, MRN "
+        "value-forwarding only takes loads VP left unclaimed. "
+        "Incompatible with --mrn-alias.",
+    )
+    garfield.add_argument(
         "--mrn-alias",
         action="store_true",
         help="Enable the MRN producer-aliasing path (off by default). "
@@ -390,6 +397,14 @@ def apply_core_knobs(cpu, args):
     vp = make_vp(args)
     if vp is not None:
         cpu.valuePred = vp
+    if args.vp_before_mrn:
+        if args.mrn_alias:
+            raise SystemExit(
+                "--vp-before-mrn is incompatible with --mrn-alias: the "
+                "producer-alias path diverts renaming before the VP "
+                "decision exists"
+            )
+        cpu.vpBeforeMrn = True
 
 
 def _mrn_banner(args):

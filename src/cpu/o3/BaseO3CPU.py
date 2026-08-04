@@ -216,6 +216,14 @@ class BaseO3CPU(BaseCPU):
     valuePred = Param.BaseValuePredictor(
         NULL, "Value predictor; NULL disables VP"
     )
+    vpBeforeMrn = Param.Bool(
+        False,
+        "Flip the rename consumption ladder: the value predictor gets "
+        "first claim and MRN value-forwarding only takes loads VP left "
+        "unclaimed (default: MRN first). Incompatible with the MRN "
+        "producer-alias path, which must divert renaming before the VP "
+        "decision exists.",
+    )
     needsTSO = Param.Bool(False, "Enable TSO Memory model")
 
     recvRespThrottling = Param.Bool(

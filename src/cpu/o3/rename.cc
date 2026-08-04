@@ -88,6 +88,7 @@ Rename::Rename(CPU *_cpu, const BaseO3CPUParams &params)
     : cpu(_cpu),
       memRenamePred(params.memRenamePredictor),
       valuePred(params.valuePred),
+      vpBeforeMrn(params.vpBeforeMrn),
       iewToRenameDelay(params.iewToRenameDelay),
       decodeToRenameDelay(params.decodeToRenameDelay),
       commitToRenameDelay(params.commitToRenameDelay),
@@ -895,7 +896,36 @@ Rename::renameInsts(ThreadID tid)
         // Restricted to integer, non-fixed-mapping destinations
         // (vfLoadRename's caller already required an integer destination
         // at lookup, so this is a repeat of the fixed-mapping guard only).
-        if (vf_value_pending) {
+        // Garfield VP consumption: predict() does all eligibility/scope
+        // filtering and, on a hit, stamps the prediction on the
+        // instruction; consuming it is the same physreg-write +
+        // scoreboard-ready mechanism as MRN's value forward. The
+        // instruction still executes normally and verifies at writeback
+        // (LSQ for loads, IEW for non-loads).
+        auto consume_value_pred = [&] {
+            if (std::optional<RegVal> pv = valuePred->predict(inst)) {
+                PhysRegIdPtr dest = inst->renamedDestIdx(0);
+                cpu->setReg(dest, *pv, inst->threadNumber);
+                scoreboard->setReg(dest);
+                DPRINTF(ValuePred,
+                        "[tid:%i] [sn:%llu] VP forward PC %s value=%#x "
+                        "to renamed dest\n",
+                        inst->threadNumber, inst->seqNum, inst->pcState(),
+                        *pv);
+            }
+        };
+
+        // The rename consumption ladder. Default order is MRN -> VP ->
+        // execute; with vpBeforeMrn the value predictor claims first and
+        // MRN value-forwarding only takes loads VP left unclaimed (the
+        // producer-alias path cannot follow the flip -- it diverts the
+        // destination map before the VP decision exists -- and the
+        // config layer rejects that combination).
+        if (vpBeforeMrn && valuePred) {
+            consume_value_pred();
+        }
+
+        if (vf_value_pending && !inst->vpPredicted()) {
             PhysRegIdPtr dest = inst->renamedDestIdx(0);
             if (dest->is(IntRegClass) && !dest->isFixedMapping()) {
                 cpu->setReg(dest, vf_value, inst->threadNumber);
@@ -918,24 +948,8 @@ Rename::renameInsts(ThreadID tid)
             }
         }
 
-        // Garfield VP: value-predict behind the MRN -> VP -> execute
-        // priority ladder -- only instructions MRN left unclaimed are
-        // consulted. predict() does all eligibility/scope filtering and,
-        // on a hit, stamps the prediction on the instruction; consuming
-        // it is the same physreg-write + scoreboard-ready mechanism as
-        // MRN's value forward. The instruction still executes normally
-        // and verifies at writeback (LSQ for loads, IEW for non-loads).
-        if (valuePred && !inst->isMrned()) {
-            if (std::optional<RegVal> pv = valuePred->predict(inst)) {
-                PhysRegIdPtr dest = inst->renamedDestIdx(0);
-                cpu->setReg(dest, *pv, inst->threadNumber);
-                scoreboard->setReg(dest);
-                DPRINTF(ValuePred,
-                        "[tid:%i] [sn:%llu] VP forward PC %s value=%#x "
-                        "to renamed dest\n",
-                        inst->threadNumber, inst->seqNum, inst->pcState(),
-                        *pv);
-            }
+        if (!vpBeforeMrn && valuePred && !inst->isMrned()) {
+            consume_value_pred();
         }
 
         if (inst->isAtomic() || inst->isStore()) {

@@ -70,8 +70,18 @@ FetchDirectedPrefetcher::notifyFTQInsert(const o3::FetchTargetPtr &ft)
     const Addr start_blk_addr = blockAddress(ft->startAddress());
     const Addr end_blk_addr = blockAddress(ft->endAddress());
 
-    for (Addr blk_addr = start_blk_addr; blk_addr <= end_blk_addr;
-         blk_addr += blkSize) {
+    // A corrupted branch target (e.g. a small negative value used as a
+    // fetch address) can hand BAC a fetch target ending in the last
+    // cache block of the address space. With an address-compare bound,
+    // blk_addr <= end_blk_addr is then a tautology: blk_addr += blkSize
+    // wraps past MaxAddr to 0 and this loop never terminates, freezing
+    // the event loop inside a single tick. Iterate by block count
+    // instead; a wrapped target (end < start) prefetches nothing,
+    // exactly as before.
+    const Addr num_blks = (end_blk_addr >= start_blk_addr)
+        ? (end_blk_addr - start_blk_addr) / blkSize + 1 : 0;
+    Addr blk_addr = start_blk_addr;
+    for (Addr i = 0; i < num_blks; i++, blk_addr += blkSize) {
 
         // Check if the address is already in the prefetch queue
         auto it = std::find(pfq.begin(), pfq.end(), blk_addr);

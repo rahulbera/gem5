@@ -197,6 +197,10 @@ Commit::CommitStats::CommitStats(CPU *cpu, Commit *commit)
                "Number of memory barriers committed"),
       ADD_STAT(committedInstType, statistics::units::Count::get(),
                "Class of committed instruction"),
+      ADD_STAT(committedVpPredicted, statistics::units::Count::get(),
+               "Committed insts that consumed a correct value prediction"),
+      ADD_STAT(committedMrned, statistics::units::Count::get(),
+               "Committed loads that were correctly memory-renamed"),
       ADD_STAT(commitEligibleSamples, statistics::units::Cycle::get(),
                "number cycles where commit BW limit reached")
 {
@@ -1205,6 +1209,10 @@ Commit::commitInsts()
                 cpu->commitStats[tid]
                     ->committedInstType[head_inst->opClass()]++;
                 stats.committedInstType[tid][head_inst->opClass()]++;
+                if (head_inst->vpPredicted())
+                    stats.committedVpPredicted++;
+                if (head_inst->isMrned())
+                    stats.committedMrned++;
                 ppCommit->notify(head_inst);
 
                 // hardware transactional memory

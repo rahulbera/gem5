@@ -544,6 +544,17 @@ class Commit
 
         /** Number of cycles where the commit bandwidth limit is reached. */
         statistics::Scalar commitEligibleSamples;
+
+        /** Committed instructions that consumed a correct value
+         *  prediction, and committed loads that were memory-renamed
+         *  correctly. A wrong resolution of either technique squashes
+         *  its instruction inclusively before it can commit, so
+         *  committed implies correct. The two are mutually exclusive
+         *  per instruction (MRN-renamed loads are not value-predicted),
+         *  so their sum is the count of committed instructions
+         *  optimized by either technique. */
+        statistics::Scalar committedVpPredicted;
+        statistics::Scalar committedMrned;
     } stats;
 };
 

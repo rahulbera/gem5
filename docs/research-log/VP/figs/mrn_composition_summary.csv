@@ -1,0 +1,5 @@
+arm,label,n,vp_frac,mrn_frac,speedup
+mrn_cc,MRN alone,190,0.0,0.039697,1.009349
+vtage_all_cc,VP alone,190,0.188791,0.0,1.017117
+mrn_vtage_all_cc,MRN-first stack,190,0.153948,0.039511,1.015248
+vpfirst_mrn_vtage_cc,VP-first stack,190,0.188684,0.004922,1.013867

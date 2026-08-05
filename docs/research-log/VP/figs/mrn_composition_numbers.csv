@@ -1,0 +1,9 @@
+"arm","label","n","speedup","tech","frac"
+"mrn_cc","MRN alone",190,1.009349,"Value prediction (VTAGE)",0
+"mrn_cc","MRN alone",190,1.009349,"Memory renaming (MRN)",0.039697
+"vtage_all_cc","VP alone",190,1.017117,"Value prediction (VTAGE)",0.188791
+"vtage_all_cc","VP alone",190,1.017117,"Memory renaming (MRN)",0
+"mrn_vtage_all_cc","MRN-first stack",190,1.015248,"Value prediction (VTAGE)",0.153948
+"mrn_vtage_all_cc","MRN-first stack",190,1.015248,"Memory renaming (MRN)",0.039511
+"vpfirst_mrn_vtage_cc","VP-first stack",190,1.013867,"Value prediction (VTAGE)",0.188684
+"vpfirst_mrn_vtage_cc","VP-first stack",190,1.013867,"Memory renaming (MRN)",0.004922

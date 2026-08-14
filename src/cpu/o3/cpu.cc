@@ -1313,6 +1313,12 @@ CPU::squashInstIt(const ListIt &instIt, ThreadID tid)
             }
         }
 
+        // Garfield VP: reclaim this instruction's in-flight
+        // occurrence count (predicted or not; flag-guarded inside).
+        if (BaseValuePredictor *vp = getValuePred()) {
+            vp->notifySquashedInFlight(inst);
+        }
+
         // Mark it as squashed.
         (*instIt)->setSquashed();
 

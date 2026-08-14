@@ -9,6 +9,7 @@
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/vp/vp_history.hh"
+#include "cpu/o3/vp/vp_inflight_map.hh"
 #include "cpu/o3/vp/vp_types.hh"
 #include "sim/sim_object.hh"
 
@@ -188,31 +189,53 @@ class BaseValuePredictor : public SimObject
      *  call accompanies it). */
     void countHistoryRestore(VpHistInitiator initiator);
 
-    /** Count-only per-renamed-instruction hook (design doc docs/
-     *  superpowers/specs/2026-08-04-evtage-design.md, S6's burst-
-     *  misprediction guard): call once per renamed dynamic
-     *  instruction, eligible or not -- LastMispVT-style predictors
-     *  need the full rename rate, not just the eligible/in-scope
-     *  subset (counting only eligible instructions would stretch the
-     *  window several-fold, per the design doc). A bare per-thread
-     *  increment; "no-op" in the sense that no attached predictor
-     *  reads renamedInsts() unless it opts into the burst guard.
-     *  Deliberately not squash-restored (design doc S6: wrong-path
-     *  rename increments are kept). Not yet called from any pipeline
-     *  stage -- wiring a rename-time call site is a one-line follow-
-     *  up once a predictor's burstGuardWindow actually needs live
-     *  data; every predictor's default keeps the guard off, so
-     *  renamedInsts() reading 0 forever is harmless until then. */
-    void
-    notifyRenamed(ThreadID tid)
+    /** Per-predictor knob: the framework maintains the per-PC
+     *  in-flight occurrence map below for this predictor (EVES-class
+     *  extrapolating predictors). Keys are folded vpKey values, not
+     *  thread-qualified -- the same single-thread declared
+     *  generalization as the burst-guard machinery (design doc,
+     *  in-flight counter subsystem). Default false: every hook is
+     *  inert and existing predictors are bit-identical. */
+    virtual bool
+    usesInflightCounts() const
     {
-        renamedCount[tid]++;
+        return false;
     }
 
-    /** Renamed-instruction count for thread tid (see notifyRenamed()).
-     *  Readable by any predictor that wants a burst-guard-style
-     *  window; 0 for every thread until notifyRenamed() is wired into
-     *  a pipeline stage. */
+    /** Once per renamed instruction, from rename.cc AFTER the
+     *  consumption ladder (an instruction never counts itself; a
+     *  later same-cycle same-PC micro-op sees this one). Feeds the
+     *  burst-guard rename count unconditionally and, for
+     *  usesInflightCounts() predictors, the in-flight map (in-scope
+     *  instructions only, marked VpInflightCounted). */
+    void notifyRenamedInst(const DynInstPtr &inst);
+
+    /** From the two squash walks (ROB::doSquash, CPU::squashInstIt):
+     *  reclaim a counted instruction's in-flight count. Flag-guarded
+     *  internally -- callers need no eligibility logic; the
+     *  VpInflightCounted bit makes it exactly-once across
+     *  overlapping walks (the MRN-proven discipline). */
+    void notifySquashedInFlight(const DynInstPtr &inst);
+
+    /** Current in-flight occurrence count for a folded key. */
+    uint32_t
+    inflightCount(uint64_t key) const
+    {
+        return inflight.count(key);
+    }
+
+    /** Renamed-instruction count for thread tid (design doc docs/
+     *  superpowers/specs/2026-08-04-evtage-design.md, S6's burst-
+     *  misprediction guard): LastMispVT-style predictors need the
+     *  full rename rate, not just the eligible/in-scope subset
+     *  (counting only eligible instructions would stretch the window
+     *  several-fold, per the design doc). Fed once per renamed
+     *  instruction, eligible or not, by rename.cc via
+     *  notifyRenamedInst(); deliberately not squash-restored (design
+     *  doc S6: wrong-path rename increments are kept). Readable by
+     *  any predictor that wants a burst-guard-style window; 0 for
+     *  every thread unless some attached predictor opts into the
+     *  burst guard. */
     unsigned
     renamedInsts(ThreadID tid) const
     {
@@ -263,10 +286,15 @@ class BaseValuePredictor : public SimObject
      *  read -- when no attached predictor sets usesHistory(). */
     VpHistory vpHist[MaxThreads];
 
-    /** Backing store for notifyRenamed()/renamedInsts() (S6's burst-
-     *  guard rename counter). Zero-initialized; stays zero -- and so
-     *  harmless -- until a pipeline stage calls notifyRenamed(). */
+    /** Backing store for renamedInsts() (S6's burst-guard rename
+     *  counter). Zero-initialized; fed once per renamed instruction
+     *  by rename.cc via notifyRenamedInst(). */
     unsigned renamedCount[MaxThreads] = {};
+
+    /** Backing store for inflightCount() (design doc, in-flight
+     *  counter subsystem). Touched only when some attached predictor
+     *  sets usesInflightCounts(). */
+    VpInflightMap inflight;
 
     struct VpStats : public statistics::Group
     {
@@ -295,6 +323,13 @@ class BaseValuePredictor : public SimObject
          *  wrong arm) whose token no longer matched a live provider
          *  (the entry was reallocated in flight). */
         statistics::Scalar correctiveResetStale;
+        /** In-flight counter closure (usesInflightCounts()
+         *  predictors): increments == decTrain + decSquash up to the
+         *  live in-flight population at the dump boundary; the
+         *  residual can never be negative. */
+        statistics::Scalar inflightIncrements;
+        statistics::Scalar inflightDecTrain;
+        statistics::Scalar inflightDecSquash;
         /** correct / (eligibleLoads + eligibleNonLoads). */
         statistics::Formula coverage;
         /** correct / (correct + wrong). */

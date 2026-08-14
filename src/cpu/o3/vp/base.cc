@@ -2,6 +2,7 @@
 
 #include "base/logging.hh"
 #include "cpu/o3/dyn_inst.hh"
+#include "cpu/o3/vp/vp_key.hh"
 #include "cpu/op_class.hh"
 #include "cpu/reg_class.hh"
 #include "params/BaseValuePredictor.hh"
@@ -134,6 +135,12 @@ BaseValuePredictor::predict(const DynInstPtr &inst)
 void
 BaseValuePredictor::train(const DynInstPtr &inst, RegVal actualValue)
 {
+    if (inst->vpInflightCounted()) {
+        inflight.decrement(
+            vpKey(inst->pcState().instAddr(), inst->pcState().microPC()));
+        inst->clearVpInflightCounted();
+        stats.inflightDecTrain++;
+    }
     if (!inScope(inst)) {
         return;
     }
@@ -187,6 +194,31 @@ BaseValuePredictor::notifySquashed(const DynInstPtr &)
     // (and future per-reason buckets); the base count needs only the
     // event. Unnamed to satisfy -Werror=unused-parameter.
     stats.predictionsSquashed++;
+}
+
+void
+BaseValuePredictor::notifyRenamedInst(const DynInstPtr &inst)
+{
+    renamedCount[inst->threadNumber]++;
+    if (!usesInflightCounts() || !inScope(inst)) {
+        return;
+    }
+    inflight.increment(
+        vpKey(inst->pcState().instAddr(), inst->pcState().microPC()));
+    inst->setVpInflightCounted();
+    stats.inflightIncrements++;
+}
+
+void
+BaseValuePredictor::notifySquashedInFlight(const DynInstPtr &inst)
+{
+    if (!inst->vpInflightCounted()) {
+        return;
+    }
+    inflight.decrement(
+        vpKey(inst->pcState().instAddr(), inst->pcState().microPC()));
+    inst->clearVpInflightCounted();
+    stats.inflightDecSquash++;
 }
 
 void
@@ -259,6 +291,14 @@ BaseValuePredictor::VpStats::VpStats(statistics::Group *parent)
       ADD_STAT(correctiveResetStale, statistics::units::Count::get(),
                "correctiveReset() calls whose token no longer matched a "
                "live provider (trainAtCommit predictors only)"),
+      ADD_STAT(inflightIncrements, statistics::units::Count::get(),
+               "In-flight occurrence map increments at rename "
+               "(usesInflightCounts() predictors only)"),
+      ADD_STAT(inflightDecTrain, statistics::units::Count::get(),
+               "In-flight occurrence map decrements at the train site"),
+      ADD_STAT(inflightDecSquash, statistics::units::Count::get(),
+               "In-flight occurrence map decrements from the squash "
+               "walks"),
       ADD_STAT(coverage, statistics::units::Ratio::get(),
                "Verified-correct predictions over the in-scope "
                "population at the train site"),

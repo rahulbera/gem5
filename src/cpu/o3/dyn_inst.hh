@@ -204,6 +204,10 @@ class DynInst : public ExecContext, public RefCounted
         VpResolved,    /// Garfield VP: the prediction was resolved
                        /// (verified or accounted squashed); a squash
                        /// must not re-account it
+        VpInflightCounted, /// Garfield VP: counted in the predictor's
+                           /// per-PC in-flight occurrence map at
+                           /// rename; the exactly-once decrement
+                           /// (commit-train or squash walk) clears it
         MaxFlags
     };
 
@@ -631,6 +635,24 @@ class DynInst : public ExecContext, public RefCounted
     setVpResolved()
     {
         instFlags[VpResolved] = true;
+    }
+
+    bool
+    vpInflightCounted() const
+    {
+        return instFlags[VpInflightCounted];
+    }
+
+    void
+    setVpInflightCounted()
+    {
+        instFlags[VpInflightCounted] = true;
+    }
+
+    void
+    clearVpInflightCounted()
+    {
+        instFlags[VpInflightCounted] = false;
     }
 
     /** Garfield VP: the predicted value consumed at rename. */

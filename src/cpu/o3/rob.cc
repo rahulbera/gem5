@@ -388,6 +388,12 @@ ROB::doSquash(ThreadID tid)
             }
         }
 
+        // Garfield VP: reclaim this instruction's in-flight
+        // occurrence count (predicted or not; flag-guarded inside).
+        if (BaseValuePredictor *vp = cpu->getValuePred()) {
+            vp->notifySquashedInFlight(squashing);
+        }
+
         // Mark the instruction as squashed, and ready to commit so that
         // it can drain out of the pipeline.
         (*squashIt[tid])->setSquashed();

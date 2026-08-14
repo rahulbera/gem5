@@ -952,6 +952,15 @@ Rename::renameInsts(ThreadID tid)
             consume_value_pred();
         }
 
+        // Garfield VP: per-renamed-instruction notification -- feeds
+        // the burst-guard rename count and, for in-flight-counting
+        // predictors, the per-PC occurrence map. Placed after the
+        // consumption ladder so an instruction never counts itself
+        // and a later same-cycle same-PC micro-op sees this one.
+        if (valuePred) {
+            valuePred->notifyRenamedInst(inst);
+        }
+
         if (inst->isAtomic() || inst->isStore()) {
             storesInProgress[tid]++;
         } else if (inst->isLoad()) {

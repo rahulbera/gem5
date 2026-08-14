@@ -495,6 +495,7 @@ TEST(EStrideTable, VictimPassOrderAndInstallState)
     std::vector<uint64_t> occupants;
     for (unsigned way = 0; way < 3; way++) {
         uint64_t k = 0x20000 + way * 0x1000;
+        unsigned tries = 0;
         while (!(EStrideTable::wayIndex(k, way) == idx[way] &&
                  EStrideTable::wayTag(k, 0) != 0 &&
                  EStrideTable::wayTag(k, 1) != 0 &&
@@ -502,6 +503,11 @@ TEST(EStrideTable, VictimPassOrderAndInstallState)
                  std::find(occupants.begin(), occupants.end(), k) ==
                      occupants.end())) {
             k += 8;
+            // Iteration bound: a future hash change should fail this
+            // test loudly instead of hanging the search forever.
+            ASSERT_LT(++tries, 2000000u)
+                << "occupant search exceeded its iteration bound for "
+                << "way " << way;
         }
         occupants.push_back(k);
         // Force this occupant's allocation start-way draw to `way`:
@@ -523,6 +529,38 @@ TEST(EStrideTable, VictimPassOrderAndInstallState)
     EXPECT_NE(
         std::find(out.begin(), out.end(), EStrideTrainOutcome::AllocAged),
         out.end());
+    // Both passes always start at the forced way 0 and scan all
+    // three ways in order, so the LAST-probed way (the one aging
+    // targets) is (0 + 2) % 3 = 2 -- occupants[2]'s slot, not an
+    // arbitrary one.
+    EXPECT_EQ(t.peek(occupants[2]).u, 2);
+
+    // Age that same entry down to u == 0 (its conf stays >= 7
+    // throughout -- aging only ever touches u -- so the exponent-6
+    // aging draw keeps passing every call).
+    rng.values.assign({0.0, 0.0, 0.0});
+    t.train(key0, 1000, llcMissLoad());
+    EXPECT_EQ(t.peek(occupants[2]).u, 1);
+    rng.values.assign({0.0, 0.0, 0.0});
+    t.train(key0, 1001, llcMissLoad());
+    EXPECT_EQ(t.peek(occupants[2]).u, 0);
+
+    // The next allocation attempt: pass 1 still finds no conf == 0
+    // (nothing here ages conf), but pass 2 now finds occupants[2]'s
+    // u == 0 slot and claims it directly -- no aging draw needed, so
+    // only the alloc and way draws are queued.
+    rng.values.assign({0.0, 0.0});
+    auto out2 = t.train(key0, 1002, llcMissLoad());
+    EXPECT_NE(std::find(out2.begin(), out2.end(),
+                        EStrideTrainOutcome::AllocatedUZeroVictim),
+              out2.end());
+    const EStridePeek p = t.peek(key0);
+    EXPECT_TRUE(p.hit);
+    EXPECT_EQ(p.conf, 1u);
+    EXPECT_EQ(p.u, 0);
+    EXPECT_FALSE(p.notFirstOcc);
+    EXPECT_EQ(p.stride, 0u);
+    EXPECT_EQ(p.lastValue, 1002u);
 }
 
 TEST(EStrideArbiter, FlagModeCrossProduct)

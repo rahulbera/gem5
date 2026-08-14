@@ -44,9 +44,33 @@ enum class EStrideAllocClass
 struct EStrideClassifier
 {
     bool isLoad = false;
+    /** CVP's NOTLLCMISS/NOTL2MISS/NOTL1MISS latency-band predicates
+     *  (Seznec's CVP-1 2018 EVES submission source, mypredictor.cc),
+     *  mapped from the load's actual memory-serve level: notL1Miss ~
+     *  latency < 12 cycles (proxy for an L1 hit), notL2Miss ~ latency
+     *  < 60 (proxy for not missing past the L2), notLlcMiss ~
+     *  latency < 150 (proxy for not missing past the LLC/into DRAM).
+     *  Meaningless (left at their defaults) when isLoad is false.
+     *  Expected monotonic for a real load: notL1Miss implies
+     *  notL2Miss implies notLlcMiss (an L1 hit is also not an L2 miss
+     *  and not an LLC miss, and so on) -- callers should preserve
+     *  this ordering; the core itself does not enforce or rely on
+     *  it. */
     bool notLlcMiss = true;
     bool notL2Miss = true;
     bool notL1Miss = true;
+    /** CVP's MFASTINST = (actual_latency < 3) (mypredictor.cc:14,
+     *  consulted at cc:153 and cc:186) -- a DIFFERENT predicate from
+     *  the identically-named EVtageClassifier::fastInst
+     *  (evtage_tables.hh), which means "genuine IntAlu" and feeds
+     *  E-VTAGE's own FASTINST = (latency == 1). The two classifier
+     *  types share a field name but diverge in meaning: a wrapper
+     *  must compute this one from E-Stride's own < 3-cycle latency
+     *  threshold and must NEVER forward EVtageClassifier::fastInst
+     *  through verbatim -- doing so would silently shift every
+     *  E-Stride confidence/allocation draw probability, and no test
+     *  in either table's GTest suite compares the two classifiers
+     *  against each other to catch it. */
     bool fastInst = false;
     EStrideAllocClass allocClass = EStrideAllocClass::AluOrStore;
     /** This instruction's prediction was delivered (consumed at

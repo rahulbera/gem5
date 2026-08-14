@@ -297,7 +297,13 @@ and break the `128 = CVP` equivalence. Reset to 0 at verify on any
 delivered E-VTAGE wrong. While `LastMispVT < burstGuardWindow`,
 prediction **emission** is suppressed — the lookup still runs, the
 token is still stamped, provider stats count, and commit training
-proceeds unchanged (CVP suppresses only `predvtage`). Declared
+proceeds unchanged (CVP suppresses only `predvtage`). [Erratum
+2026-08-14: that parenthetical is wrong — CVP's `if (LastMispVT >=
+128)` at mypredictor.cc:44 wraps the `predicted_value` assignment
+too, suppressing the whole VTAGE contribution. Unobservable in
+standalone E-VTAGE, where nothing else supplies a value; it matters
+in the EVES composition — see
+2026-08-14-estride-design.md §5.] Declared
 heuristic: the counter is deliberately not squash-restored —
 wrong-path rename increments are kept and only shorten the window.
 Param `burstGuardWindow` (0 = off, default 0 per the ratified fork;

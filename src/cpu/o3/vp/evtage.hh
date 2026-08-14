@@ -92,10 +92,13 @@ class EVtageVP : public BaseValuePredictor
      *  thread ID, so correctiveResetImpl() resets every thread's mark
      *  together rather than only the wronged thread's -- a documented
      *  simplification, harmless while burstGuardWindow defaults to 0
-     *  (off) and renamedInsts() is never fed by any pipeline call
-     *  site (see base.hh's notifyRenamed() doc comment); revisit
-     *  (thread the ID through correctiveReset()) before relying on
-     *  burstGuardWindow > 0 in a multi-hardware-thread config. */
+     *  (off) and, on this predictor, stays locked off by the
+     *  constructor's fatal_if (see evtage.cc): renamedInsts() is fed
+     *  once per renamed instruction (base.hh's notifyRenamedInst()),
+     *  but the guard-capable configuration lives in the EVES
+     *  composition predictor. Revisit (thread the ID through
+     *  correctiveReset()) before relying on burstGuardWindow > 0 in a
+     *  multi-hardware-thread config. */
     unsigned lastWrongMark[MaxThreads] = {};
 
     struct EVtageStats : public statistics::Group

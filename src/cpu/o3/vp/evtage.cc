@@ -72,15 +72,15 @@ EVtageVP::EVtageVP(const EVtageVPParams &p)
             tableRng),
       evtageStats(this, 2 + p.numTagged)
 {
-    // The burst guard consumes the framework's renamed-instruction
-    // count, which no pipeline stage feeds yet: with the hook unwired
-    // the counter stays 0, lastMispVT never advances past the window,
-    // and a nonzero burstGuardWindow would silently suppress every
-    // confident prediction for the whole run. Fail loudly until the
-    // rename hook lands.
+    // renamedInsts() is now fed once per renamed instruction (see
+    // base.hh's notifyRenamedInst()), but this predictor's burst
+    // guard stays locked off pending re-validation of a nonzero
+    // window: the guard-capable configuration lives in the EVES
+    // composition predictor. Fail loudly if set here regardless.
     fatal_if(p.burstGuardWindow > 0,
-             "EVtageVP burstGuardWindow requires the rename-count "
-             "hook, which is not wired yet");
+             "EVtageVP burstGuardWindow is locked off; the "
+             "guard-capable configuration lives in the EVES "
+             "composition predictor");
 }
 
 VpPredictResult

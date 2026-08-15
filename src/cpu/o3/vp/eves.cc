@@ -73,8 +73,12 @@ toEStrideClassifier(const VpClassifierInfo &c, bool stride_predicted)
             lvl == EVtageMemLevel::L1d || lvl == EVtageMemLevel::Stlf;
         sc.fastInst = lvl == EVtageMemLevel::Stlf;
     } else {
-        // Non-loads: all latency terms true; MFASTINST mirrors
-        // E-VTAGE's fastInstBit (!slowInst covers alu, store, undef).
+        // Non-loads: all latency terms true. fastInst here is CVP's
+        // MFASTINST (latency < 3): every non-load class except the
+        // multi-cycle SlowAlu group executes in under 3 cycles, so
+        // alu, store, and undef all qualify. (Deliberately NOT
+        // EVtageClassifier::fastInst, which means genuine IntAlu --
+        // see EStrideClassifier's doc comment in estride_table.hh.)
         sc.notLlcMiss = sc.notL2Miss = sc.notL1Miss = true;
         sc.fastInst = c.instClass != VpInstClass::SlowAlu;
     }

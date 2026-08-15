@@ -335,10 +335,10 @@ TEST(EStrideTable, DrawCountsByStrideRegimeAndSignedExclusion)
         ScriptedRng rng;
         EStrideTable t([&rng] { return rng(); });
         const EStrideClassifier alloc = llcMissLoad();
-        t.train(key, 1 << 20, alloc);                // no draw (miss+p=1
-                                                     // alloc: 1 draw at
-                                                     // exponent 0 + 1
-                                                     // way draw)
+        t.train(key, 1 << 20, alloc);                // miss: consumes the
+                                                     // exponent-0 alloc
+                                                     // draw (passes at
+                                                     // p = 1) + way draw
         t.train(key, (1 << 20) + stride_val, alloc); // StrideSet
         const unsigned before = rng.draws;
         // All queued fails: every conf draw AND u draw consumed.
@@ -445,9 +445,9 @@ TEST(EStrideTable, AllocationLadderPerClass)
         EXPECT_EQ(out[0], EStrideTrainOutcome::AllocatedConfZeroVictim);
         EXPECT_EQ(draws, 2u); // alloc draw + way draw
     }
-    // Never: zero draws, no outcome... actually AllocDrawRefused is
-    // pushed (the draw "fails" deterministically without consuming
-    // rng) -- assert exactly that:
+    // The Never class refuses deterministically: AllocDrawRefused is
+    // pushed with zero RNG draws consumed (the CVP switch has no arm
+    // for these classes, so no random() call ever runs).
     {
         auto [out, draws] =
             tryAlloc(EStrideAllocClass::Never, false, 0.9, 0xF200);

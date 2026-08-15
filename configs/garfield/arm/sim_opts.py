@@ -297,11 +297,12 @@ def add_common_args(
         "(2,4,8,16,32,64).",
     )
     garfield.add_argument(
-        "--eves-vtage-overwrite-requires-confidence",
+        "--eves-vtage-overwrite-verbatim",
         action="store_true",
-        help="EVES arbitration ablation: require E-VTAGE confidence "
-        "before its value overwrites a stride prediction (default "
-        "off = CVP-1 source-verbatim overwrite).",
+        help="EVES arbitration ablation: restore the CVP-1 source's "
+        "write-order overwrite (a VTAGE tag hit overwrites the stride "
+        "value even below confidence). Default off: the overwrite "
+        "requires E-VTAGE confidence, the 190-checkpoint A/B winner.",
     )
     return parser
 
@@ -396,7 +397,7 @@ def make_vp(args):
             burstGuardWindow=args.evtage_burst_guard,
             confThreshold=args.evtage_conf_threshold,
             vtageOverwriteRequiresConfidence=(
-                args.eves_vtage_overwrite_requires_confidence
+                not args.eves_vtage_overwrite_verbatim
             ),
             **kwargs,
         )

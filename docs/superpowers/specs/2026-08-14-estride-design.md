@@ -90,9 +90,14 @@ facility:
 
 New params on `EvesVP` beyond the duplicated E-VTAGE set:
 
-- `vtageOverwriteRequiresConfidence` (Bool, default False): the
+- `vtageOverwriteRequiresConfidence` (Bool, default True): the
   ratified arbitration ablation (§5). False = source-verbatim
-  overwrite; True = the comment's intended semantics.
+  overwrite; True = the comment's intended semantics. [Amended
+  2026-08-15: the original default was False (source-verbatim); the
+  190-checkpoint A/B showed confidence-gating wins by +3.6% (the
+  composition report), so True is the shipped default and the
+  verbatim mode is the opt-in ablation, exposed as
+  `--eves-vtage-overwrite-verbatim`.]
 
 `burstGuardWindow` is inherited from the duplicated set and — unlike
 on the frozen `EVtageVP` — is actually usable on `EvesVP`, because
@@ -102,8 +107,9 @@ this work finally wires the rename-rate feed (§4). Default stays 0
 Config layer: `sim_opts.py` gains `eves` in the `--use-vp` choices;
 the existing `--evtage-hist-lengths` (and the other evtage knobs it
 forwards) apply to the embedded VTAGE side unchanged, plus two new
-switches: `--eves-vtage-overwrite-requires-confidence` and
-the shared `--evtage-burst-guard` (forwards to
+switches: the arbitration-mode switch (post-amendment:
+`--eves-vtage-overwrite-verbatim`, opting back into the source's
+overwrite) and the shared `--evtage-burst-guard` (forwards to
 `EvesVP.burstGuardWindow`). Evaluation arms run the dense-64 series
 `{2,4,6,11,20,36,64}` on the VTAGE side — identical to the
 `evtage`/`evtage_all` control arms.
@@ -602,7 +608,9 @@ storage note against its speedup contribution.
 Forks (user-ratified): per-PC inflight counter table (replacing the
 ring scan); SafeStride +1 tick at commit-train; verbatim 48-entry
 geometry; arbitration = verbatim overwrite default + ablation param +
-overwrite stats.
+overwrite stats [amended 2026-08-15, user-ratified: the default is
+now the confidence-gated mode — the 190-checkpoint A/B winner by
++3.6% — and the verbatim overwrite is the opt-in ablation].
 
 Declared deviations from the CVP source, each isolated and testable:
 (1) inflight = exact counter, not ring scan (removes stale-slot and

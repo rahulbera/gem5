@@ -16,10 +16,13 @@ namespace o3
  * function over POD inputs so every flag/mode combination is directly
  * GTest-able. Reproduces the CVP-1 source's write-order mechanism
  * (getPredStride first, getPredVtage second overwriting the value,
- * cc:136-144): with overwriteRequiresConfidence false (the verbatim
- * default), a VTAGE tag hit outside the blackout overwrites the
- * stride value even below VTAGE confidence -- delivery still requires
- * a component flag (stride or VTAGE confident), matching the source's
+ * cc:136-144): with overwriteRequiresConfidence false (the
+ * source-verbatim mode, opt-in since the 190-checkpoint A/B showed
+ * confidence-gating wins by +3.6% -- the composition report,
+ * docs/research-log/VP/2026-08-15-eves-estride-composition.md), a
+ * VTAGE tag hit outside the blackout overwrites the stride value
+ * even below VTAGE confidence -- delivery still requires a component
+ * flag (stride or VTAGE confident), matching the source's
  * predstride || predvtage use-bit.
  */
 struct EvesArbiterIn
@@ -30,7 +33,7 @@ struct EvesArbiterIn
     bool vtageConfident = false; // implies vtageHit
     RegVal vtageValue = 0;
     bool blackoutActive = false;
-    bool overwriteRequiresConfidence = false;
+    bool overwriteRequiresConfidence = true;
 };
 
 struct EvesArbiterOut

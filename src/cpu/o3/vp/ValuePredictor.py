@@ -234,10 +234,12 @@ class EvesVP(BaseValuePredictor):
         "behavior.",
     )
     vtageOverwriteRequiresConfidence = Param.Bool(
-        False,
+        True,
         "EVES arbitration: require the embedded E-VTAGE side to be "
         "high-confidence before its value overwrites the stride "
-        "prediction. False (default) reproduces the CVP-1 source "
-        "verbatim: a VTAGE tag hit outside the post-misprediction "
+        "prediction. True (default; the 190-checkpoint A/B winner by "
+        "+3.6%) gates the overwrite on VTAGE confidence. False "
+        "reproduces the CVP-1 source's write-order mechanism as this "
+        "port maps it: a VTAGE tag hit outside the post-misprediction "
         "blackout overwrites even below confidence.",
     )

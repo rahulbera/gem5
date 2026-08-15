@@ -324,7 +324,9 @@ the rollup dilutes the 12-checkpoint stockfish family to one workload.*
    `vtageOverwriteRequiresConfidence` to True (with a spec §5/§12
    amendment) is the defensible default; ranked first because it is a
    one-line decision that changes what every future EVES experiment
-   measures.
+   measures. *Resolved 2026-08-15: the default is now
+   confidence-gated; the verbatim overwrite is the opt-in
+   `--eves-vtage-overwrite-verbatim` ablation.*
 2. **Criticality-gated stride prediction** — result 2 says E-Stride's
    corrects mostly shave hidden latency while its wrongs pay full
    price; gating stride deliveries on load criticality (or a

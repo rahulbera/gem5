@@ -103,9 +103,10 @@ Config layer: `sim_opts.py` gains `eves` in the `--use-vp` choices;
 the existing `--evtage-hist-lengths` (and the other evtage knobs it
 forwards) apply to the embedded VTAGE side unchanged, plus two new
 switches: `--eves-vtage-overwrite-requires-confidence` and
-`--eves-burst-guard <N>` (forwards to `EvesVP.burstGuardWindow`).
-Evaluation arms run the dense-64 series `{2,4,6,11,20,36,64}` on the
-VTAGE side — identical to the `evtage`/`evtage_all` control arms.
+the shared `--evtage-burst-guard` (forwards to
+`EvesVP.burstGuardWindow`). Evaluation arms run the dense-64 series
+`{2,4,6,11,20,36,64}` on the VTAGE side — identical to the
+`evtage`/`evtage_all` control arms.
 
 ## 3. EStrideTable core — verbatim rules
 

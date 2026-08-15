@@ -48,6 +48,7 @@ checkpoint, the region lengths) stay in the driver that owns them.
 import argparse
 
 from m5.objects import (
+    EvesVP,
     EVtageVP,
     LastValueVP,
     MemRenamePredictor,
@@ -201,14 +202,15 @@ def add_common_args(
     garfield.add_argument(
         "--use-vp",
         type=str,
-        choices=["lvp", "vtage", "evtage"],
+        choices=["lvp", "vtage", "evtage", "eves"],
         default=None,
         metavar="TYPE",
         help="Garfield: attach a value predictor of the given type "
         "(lvp = last-value predictor; vtage = VTAGE, PC x history "
         "tagged prediction; evtage = E-VTAGE, CVP-1 EVES's per-class "
-        "probabilistic update policy at the same table geometry). "
-        "Absent = VP disabled (NULL).",
+        "probabilistic update policy at the same table geometry; "
+        "eves = full EVES (E-VTAGE + E-Stride)). Absent = VP disabled "
+        "(NULL).",
     )
     garfield.add_argument(
         "--vp-all-insts",
@@ -267,29 +269,39 @@ def add_common_args(
         type=int,
         default=0,
         metavar="WINDOW",
-        help="E-VTAGE burst-misprediction guard window in renamed "
-        "instructions (0 = off, the ratified-fork default; 128 = "
-        "CVP-1 EVES's own behavior).",
+        help="E-VTAGE / EVES burst-misprediction guard window in "
+        "renamed instructions (0 = off, the ratified-fork default; "
+        "128 = CVP-1 EVES's own behavior). E-VTAGE's own guard stays "
+        "locked off (fatal_if); only EVES honors a nonzero window.",
     )
     garfield.add_argument(
         "--evtage-conf-threshold",
         type=int,
         default=7,
-        help="E-VTAGE minimum confidence required to predict (minimum "
-        "1; CVP-1 default is saturation, 7). Note the confidence-"
-        "increment gate is per-class probabilistic (design doc S1), "
-        "not a fixed per-transition rate, so reaching the default "
-        "threshold takes materially longer than plain VTAGE's FPC.",
+        help="E-VTAGE / EVES minimum confidence required to predict "
+        "(minimum 1; CVP-1 default is saturation, 7). Note the "
+        "confidence-increment gate is per-class probabilistic "
+        "(design doc S1), not a fixed per-transition rate, so "
+        "reaching the default threshold takes materially longer than "
+        "plain VTAGE's FPC.",
     )
     garfield.add_argument(
         "--evtage-hist-lengths",
         type=_vtage_hist_lengths,
         default=None,
         metavar="L1,L2,...",
-        help="E-VTAGE per-tagged-component history lengths, shortest "
-        "to longest (same validation as --vtage-hist-lengths); also "
-        "sets numTagged to the list's length. Absent = E-VTAGE's own "
-        "default geometry (2,4,8,16,32,64).",
+        help="E-VTAGE / EVES per-tagged-component history lengths, "
+        "shortest to longest (same validation as "
+        "--vtage-hist-lengths); also sets numTagged to the list's "
+        "length. Absent = E-VTAGE's own default geometry "
+        "(2,4,8,16,32,64).",
+    )
+    garfield.add_argument(
+        "--eves-vtage-overwrite-requires-confidence",
+        action="store_true",
+        help="EVES arbitration ablation: require E-VTAGE confidence "
+        "before its value overwrites a stride prediction (default "
+        "off = CVP-1 source-verbatim overwrite).",
     )
     return parser
 
@@ -372,6 +384,20 @@ def make_vp(args):
             onlyLoads=not args.vp_all_insts,
             burstGuardWindow=args.evtage_burst_guard,
             confThreshold=args.evtage_conf_threshold,
+            **kwargs,
+        )
+    if args.use_vp == "eves":
+        kwargs = {}
+        if args.evtage_hist_lengths is not None:
+            kwargs["historyLengths"] = args.evtage_hist_lengths
+            kwargs["numTagged"] = len(args.evtage_hist_lengths)
+        return EvesVP(
+            onlyLoads=not args.vp_all_insts,
+            burstGuardWindow=args.evtage_burst_guard,
+            confThreshold=args.evtage_conf_threshold,
+            vtageOverwriteRequiresConfidence=(
+                args.eves_vtage_overwrite_requires_confidence
+            ),
             **kwargs,
         )
     assert args.use_vp == "lvp"

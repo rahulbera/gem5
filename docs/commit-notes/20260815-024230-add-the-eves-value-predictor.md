@@ -21,7 +21,8 @@ index-field width) against a 61-bit budget. `predictImpl` runs the
 stride lookup then the VTAGE lookup then `evesArbitrate()`, exactly
 as the CVP-1 source's write-order mechanism (stride first, VTAGE
 overwrites even below confidence in verbatim mode). `trainImpl` trains
-VTAGE then E-Stride, folding stride outcomes into a 15-stat surface.
+VTAGE then E-Stride, folding stride outcomes into the EvesStats
+surface (28 scalars, one vector, one histogram).
 `correctiveResetImpl` routes the SafeStride penalty / lastWrongMark
 reset / VTAGE corrective punish off the three flag bits per spec S6 --
 a stride-supplied wrong gets no VTAGE punish and reports live (no
@@ -106,7 +107,8 @@ Bit-identity re-gate 5/5 (`lvp`, `vtage`, `evtage`, `evtage_all`,
 ## Files changed
 - `src/cpu/o3/vp/eves.hh`, `eves.cc` — the `EvesVP` SimObject: token
   flags, owned `EStrideTable`/`EVtageTables`, predict/train/corrective-
-  reset routing, 15-stat surface (`EvesStats`).
+  reset routing, EvesStats surface (28 scalars + allocation-class
+  vector + in-flight histogram).
 - `src/cpu/o3/vp/ValuePredictor.py`, `SConscript` — `EvesVP` params
   (duplicated E-VTAGE geometry + `vtageOverwriteRequiresConfidence`)
   + build registration.

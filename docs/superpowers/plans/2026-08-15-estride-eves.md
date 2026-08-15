@@ -1898,9 +1898,17 @@ stats.txt:
 2. `predictionsWrong == deliveredWrongByVtage +
    deliveredWrongByStride`.
 3. `predictionsCorrect == deliveredCorrectByVtage +
-   deliveredCorrectByStride` — CAVEAT: predictionsCorrect counts at
-   the verify site and deliveredCorrect* at commit, so allow the
-   in-flight epsilon: recheck equality only at exit (drained).
+   deliveredCorrectByStride + (verified-correct predictions squashed
+   or faulted before commit)`. predictionsCorrect counts at the
+   verify site; deliveredCorrect* counts at commit-train, which only
+   runs for instructions that actually commit. A prediction that
+   verifies correct and is then squashed by an OLDER redirect
+   (branch/VP/memory-order) or whose instruction faults at commit
+   never reaches commit-train, so it lands in neither
+   deliveredCorrectByVtage nor deliveredCorrectByStride — this term
+   is structurally POSITIVE whenever the run has squash pressure, and
+   does not drain away at exit (the instructions it counts never
+   commit, by definition). It is zero only on a squash-free run.
 4. Inflight closure: `inflightIncrements == inflightDecTrain +
    inflightDecSquash`.
 

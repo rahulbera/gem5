@@ -38,27 +38,65 @@ already discharged in an earlier commit -- untouched here.
 Gates: full build clean, `--help` runs; 5/5 GTest binaries green
 (21+4+15+32+54); four boot smokes (vpchase, all four `--use-vp eves`
 variants) rc=0, `predictionsMade > 0`, inflight closure identity
-exact at drained exit. Directed routing smokes (branchsort/vpalu,
+(`inflightIncrements == inflightDecTrain + inflightDecSquash`) exact
+(0 diff) on all four. Directed routing smokes (branchsort/vpalu,
 `--evtage-conf-threshold 1`): `deliveredWrongByVtage ==
 vtageCorrectivePunishes + correctiveResetStale` and `predictionsWrong
 == deliveredWrongByVtage + deliveredWrongByStride` hold exactly on
-every run, including one crafted with
+every run (both pair counters at the SAME verify site, so they never
+straddle a later pipeline stage), including one crafted with
 `--eves-vtage-overwrite-requires-confidence` to force real
 stride-supplied wrongs (561 of them, correctly routed with zero VTAGE
-punishes). `predictionsCorrect ==
-deliveredCorrectByVtage+deliveredCorrectByStride` and the inflight
-closure show a small residual (single digits to a few dozen, out of
-populations up to 1.3M) on these hostile, fully-drained runs only;
-root-caused via temporary per-seqNum instrumentation (reverted, not
-part of this commit) to `m5_reset_stats()` at ROI_BEGIN (roi.h)
-zeroing the gem5 Stat counters while a handful of already-renamed
-instructions are still in flight across rename-to-commit or
-verify-to-commit -- the underlying algorithmic state (the
-`VpInflightCounted` flag, the per-key map) is untouched by the reset
-and balances to exactly zero at true process exit. The boot smokes
-(no reset straddling) show zero residual. Bit-identity re-gate 5/5
-(`lvp`, `vtage`, `evtage`, `evtage_all`, `mrn_vp`) IDENTICAL modulo
-new zero stats.
+punishes).
+
+The other two closure checks are NOT verify-site-only and show two
+DIFFERENT, unrelated residuals -- corrected here after an initial
+mis-attribution that applied one mechanism to both:
+
+- Inflight closure is exact (0 diff) on all four boot smokes, but
+  shows a small NEGATIVE residual (-7/-7/-10, out of populations up
+  to 1.3M) on the three hostile, fully-drained runs
+  (eves_hostile_all/eves_hostile_all_ablation/eves_vpalu). Root-
+  caused via temporary per-seqNum instrumentation (reverted, not part
+  of this commit): `roi.h`'s `ROI_BEGIN()` calls `m5_reset_stats(0,0)`,
+  zeroing the gem5 Stat counters (including `inflightIncrements`)
+  while a handful of already-renamed, VP-eligible instructions from
+  the pre-ROI setup phase are still in flight; their later
+  commit/squash decrements land after the reset with no matching
+  pre-reset increment left in the (now-zeroed) counter, producing a
+  negative apparent residual. The underlying algorithmic state (the
+  `VpInflightCounted` flag, the per-key map) is untouched by the reset
+  and balances to exactly zero at true process exit (confirmed: raw,
+  reset-immune counters summed to inc=245374 ==
+  decTrain(227259)+decSquash(18115), zero panics on a strict
+  per-instruction pairing invariant). Boot smokes show no residual
+  because their pre-ROI setup has negligible VP-eligible activity to
+  straddle the reset.
+- `predictionsCorrect == deliveredCorrectByVtage +
+  deliveredCorrectByStride` shows a DIFFERENT, POSITIVE residual --
+  NOT the reset mechanism above (a reset zeros the earlier-site term
+  and would produce a negative gap, the opposite sign). Even the boot
+  smokes show a small nonzero gap here: eves_loads/eves_guard128
+  diff=3 (of predictionsCorrect=49860); eves_all diff=467 (of 52585);
+  eves_ablation diff=0 (of 98947) -- scaling with squash pressure
+  (eves_all: predictionsWrong=109, predictionsSquashed=1961,
+  squashedInsts=7140, vs eves_loads's 2/16/106). True cause:
+  `predictionsCorrect` counts at the verify site; `deliveredCorrectBy*`
+  counts at commit-train, which runs only for instructions that
+  actually commit. A prediction that verifies correct and is then
+  squashed by an OLDER redirect (branch/VP/memory-order mispredict) or
+  whose instruction faults at commit never reaches commit-train, so it
+  is counted in `predictionsCorrect` but in neither
+  `deliveredCorrectByVtage` nor `deliveredCorrectByStride` -- a term
+  that does not drain at exit (those instructions never commit, by
+  definition) and is structurally positive whenever the run has any
+  squash pressure, zero only on a squash-free run. This exonerates the
+  S6 routing code: mis-routing would preserve the sum (move counts
+  between the two `deliveredCorrectBy*` buckets), not shrink it; only
+  never-trained instructions can shrink it.
+
+Bit-identity re-gate 5/5 (`lvp`, `vtage`, `evtage`, `evtage_all`,
+`mrn_vp`) IDENTICAL modulo new zero stats.
 
 ## Files changed
 - `src/cpu/o3/vp/eves.hh`, `eves.cc` — the `EvesVP` SimObject: token

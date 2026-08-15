@@ -23,11 +23,14 @@ OLDER redirect (branch/VP/memory-order mispredict) or whose
 instruction faults at commit never reaches commit-train, so it is
 counted in `predictionsCorrect` but attributed to neither
 `deliveredCorrectBy*` bucket -- a term that does not drain at exit
-(those instructions never commit, by definition) and is structurally
-positive whenever the run has any squash pressure. This exonerates
-the S6 verify/train routing: mis-routing would move counts between
-the two `deliveredCorrectBy*` buckets (preserving the sum), not shrink
-it; only never-trained instructions can shrink it.
+(those instructions never commit, by definition). It is positive
+exactly when some verified-correct prediction is squashed or faults
+before commit; zero when no such victim occurs -- likely, but not
+guaranteed, at negligible squash pressure (a run can squash plenty of
+instructions without ever killing a verified-correct prediction).
+This exonerates the S6 verify/train routing: mis-routing would move
+counts between the two `deliveredCorrectBy*` buckets (preserving the
+sum), not shrink it; only never-trained instructions can shrink it.
 
 Extracted `predictionsCorrect`/`deliveredCorrectByVtage`/
 `deliveredCorrectByStride`/`predictionsWrong`/`predictionsSquashed`/
@@ -43,12 +46,15 @@ identity, not this one:
 | eves_ablation | 98947 | 98947 | 0 | 2 | 34 | 106 |
 | eves_guard128 | 49860 | 49857 | 3 | 2 | 16 | 106 |
 
-The gap correlates with squash pressure (eves_all's 467-instance gap
-against its 1961 predictionsSquashed / 7140 squashedInsts, vs.
-eves_loads/guard128's 3-instance gap against 16 / 106), consistent
-with the true mechanism above; eves_ablation's 0 diff on this
-low-squash workload shows the term genuinely reaches zero when squash
-pressure is negligible enough. The inflight-closure identity remains
+Raw squash volume does not, by itself, predict the gap:
+eves_ablation's predictionsSquashed=34/squashedInsts=106 is no
+smaller than eves_loads's 16/106, yet eves_ablation's diff is 0
+against eves_loads's 3 -- consistent with the precise mechanism (a
+victim-specific event, not a volume-scaled one): the residual is
+positive exactly when some verified-correct prediction is squashed or
+faults before commit, zero when no such victim occurs among however
+many squashes happened, likely but not guaranteed at negligible
+squash pressure. The inflight-closure identity remains
 exact (0 diff) on all four boot smokes -- that mechanism (and its
 negative sign) is unchanged from the original commit note; only the
 `predictionsCorrect` paragraph was wrong.

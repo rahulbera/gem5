@@ -1906,9 +1906,12 @@ stats.txt:
    (branch/VP/memory-order) or whose instruction faults at commit
    never reaches commit-train, so it lands in neither
    deliveredCorrectByVtage nor deliveredCorrectByStride — this term
-   is structurally POSITIVE whenever the run has squash pressure, and
    does not drain away at exit (the instructions it counts never
-   commit, by definition). It is zero only on a squash-free run.
+   commit, by definition). It is positive exactly when some
+   verified-correct prediction is squashed or faults before commit;
+   zero when no such victim occurs — likely, but not guaranteed, at
+   negligible squash pressure (a run can squash plenty of
+   instructions without ever killing a verified-correct prediction).
 4. Inflight closure: `inflightIncrements == inflightDecTrain +
    inflightDecSquash`.
 

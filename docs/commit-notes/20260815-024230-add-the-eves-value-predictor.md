@@ -78,9 +78,10 @@ mis-attribution that applied one mechanism to both:
   and would produce a negative gap, the opposite sign). Even the boot
   smokes show a small nonzero gap here: eves_loads/eves_guard128
   diff=3 (of predictionsCorrect=49860); eves_all diff=467 (of 52585);
-  eves_ablation diff=0 (of 98947) -- scaling with squash pressure
-  (eves_all: predictionsWrong=109, predictionsSquashed=1961,
-  squashedInsts=7140, vs eves_loads's 2/16/106). True cause:
+  eves_ablation diff=0 (of 98947) despite eves_ablation's own
+  predictionsSquashed=34/squashedInsts=106 being no smaller than
+  eves_loads's 16/106 (raw squash volume alone does not predict this
+  residual -- see the precise scoping below). True cause:
   `predictionsCorrect` counts at the verify site; `deliveredCorrectBy*`
   counts at commit-train, which runs only for instructions that
   actually commit. A prediction that verifies correct and is then
@@ -89,11 +90,15 @@ mis-attribution that applied one mechanism to both:
   is counted in `predictionsCorrect` but in neither
   `deliveredCorrectByVtage` nor `deliveredCorrectByStride` -- a term
   that does not drain at exit (those instructions never commit, by
-  definition) and is structurally positive whenever the run has any
-  squash pressure, zero only on a squash-free run. This exonerates the
-  S6 routing code: mis-routing would preserve the sum (move counts
-  between the two `deliveredCorrectBy*` buckets), not shrink it; only
-  never-trained instructions can shrink it.
+  definition). It is positive exactly when some verified-correct
+  prediction is squashed or faults before commit; zero when no such
+  victim occurs -- likely, but not guaranteed, at negligible squash
+  pressure (a run can squash plenty of instructions without ever
+  killing a verified-correct prediction, as eves_ablation's 0 diff
+  above shows). This exonerates the S6 routing code: mis-routing
+  would preserve the sum (move counts between the two
+  `deliveredCorrectBy*` buckets), not shrink it; only never-trained
+  instructions can shrink it.
 
 Bit-identity re-gate 5/5 (`lvp`, `vtage`, `evtage`, `evtage_all`,
 `mrn_vp`) IDENTICAL modulo new zero stats.

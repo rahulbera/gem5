@@ -338,6 +338,19 @@ board = QemuVirtBoard(
     platform=QEMU_Virt(),
 )
 
+# 16-bit ASIDs (FEAT_ASID16). Every capture CPU we restore from reports
+# ID_AA64MMFR0_EL1.ASIDBits = 2 -- Neoverse V1 under KVM and QEMU's TCG
+# cortex-a57 alike -- so the guest kernel sets TCR_EL1.AS = 1 and allocates
+# 16-bit ASIDs. ArmSystem defaults to 8-bit, and gem5 then reads the ASID from
+# TTBR[55:48]: every pair of address spaces whose ASIDs share a low byte
+# becomes ONE address space to the TLB, and a process translates through
+# another's page tables. Same feature-envelope law as `release` above, on a
+# parameter that is not part of the extension list. Caught 2026-09-19: a
+# restored agentic checkpoint's CPython replay driver (ASID 0x4ec) hit the
+# docker CLI's translations (ASID 0xeec), executed a Go text page and died of
+# SIGSEGV, while the same state resumed under KVM completes the workload.
+board.have_large_asid_64 = True
+
 if not args.gen_ref and args.restore_dir is None:
     raise SystemExit("--restore-dir is required unless --gen-ref")
 

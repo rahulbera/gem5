@@ -185,3 +185,48 @@ faster, by +21.24% to +23.01%. Cumulatively the build is +29.0% to +32.0% over t
 - **For the kratos2 port:** compute nodes have no tcmalloc, so the port must ship
   `libtcmalloc_minimal.so.4` next to the binary (with an rpath) or link it statically.
 
+### Trial 3 — optimized `ext/` libraries
+
+**Summary:** the bundled `ext/` libraries were compiled with no `-O` flag, i.e. -O0.
+Building them at `-O3` gains 3.3–3.4% on the two memory-heavy checkpoints and is neutral
+to slightly negative on the compute-bound ones. Stats are bit-identical.
+**Accepted, narrowly.**
+
+**Key idea:** gem5's SConstruct runs the `ext/` SConscripts on the base environment
+before the per-variant `-O3` is added (`SConstruct:1003-1011` vs `src/SConscript:689-698`).
+So every `ext/` library is compiled at -O0 in every variant, `.fast` included.
+`ext/drampower` is on the simulation path: every DRAM command is logged to DRAMPower,
+and `calcWindowEnergy` runs at each refresh (`src/mem/dram_interface.cc:1219, 1777,
+1827`). `CCFLAGS_EXTRA` is appended before the `ext/` loop (`SConstruct:998-999`), so
+`CCFLAGS_EXTRA=-O3` optimizes `ext/`. `src/` is unaffected because its own `-O3` comes
+later.
+
+**Files and flags targeted:** `CCFLAGS_EXTRA=-O3`, new build dir `ARM_ext`. No source
+change. `compile_commands.json` confirms that all 13 `ext/drampower` sources now get `-O3`.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3' LINKFLAGS_EXTRA='' scons build/ARM_ext/gem5.fast -j32 --ignore-style 
+```
+
+Built in 412 s, with 42247820 bytes of `.text`.
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 688.9 | 676.4 | -1.82% | slower | +29.59% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 719.3 | 712.8 | -0.91% | slower | +30.75% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 492.6 | 496.1 | +0.71% | faster (within noise) | +31.58% | 1.41% | yes |
+| 723.llvm_r.1.0 | 362.0 | 374.2 | +3.38% | faster | +33.38% | 1.50% | yes |
+| 753.ns3_r.2.0 | 402.8 | 416.3 | +3.34% | faster | +35.86% | 1.57% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5, and 3/5 are faster than Trial 2, so
+the rule is met. But it is narrow:
+- the gain is clear only on `723.llvm_r` (+3.38%) and `753.ns3_r` (+3.34%), the two
+  lowest-IPC, most memory-active checkpoints, where DRAMPower sees the most commands;
+- `708.sqlite_r`'s +0.71% is inside its noise;
+- both stockfish checkpoints, compute-bound at IPC 2.3–2.5, got slower by 0.91% and
+  1.82%.
+
+The stockfish drop is larger than its baseline noise. It is more likely a code-layout
+side effect than a real cost, since only `ext/` code changed. Expect this lever to help
+DRAM-heavy workloads (like the agentic ones) and to be neutral elsewhere.
+

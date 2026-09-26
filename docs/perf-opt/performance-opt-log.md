@@ -230,6 +230,18 @@ The stockfish drop is larger than its baseline noise. It is more likely a code-l
 side effect than a real cost, since only `ext/` code changed. Expect this lever to help
 DRAM-heavy workloads (like the agentic ones) and to be neutral elsewhere.
 
+**Correction (2026-09-27, from the profile, see "Profile of the accepted build"):** the
+DRAMPower explanation above is wrong.
+- **Evidence:** profiling the Trial 2 binary (`ext/` still at -O0) over
+  `723.llvm_r`'s measured region puts all DRAMPower code at **0.14%** of samples.
+  Optimizing it cannot yield +3.4%.
+- **So:** Trial 3's gains on llvm and ns3 are most likely code-layout or measurement
+  noise, and the stockfish losses the same. The lever is harmless and stays in the
+  recipe, but it gives no real speedup.
+- **Protocol lesson:** the two-run noise figure underestimates layout noise. The same
+  Trial 2 binary measured 362.0 KIPS on llvm with five concurrent runs and 381.5 KIPS
+  running alone.
+
 ### Trial 4 — link-time optimization (LTO), with a linker comparison
 
 **Summary:** building with GCC LTO shrinks `.text` from 42.2 MB to 29.8 MB. It speeds up
@@ -475,4 +487,127 @@ about 412 s + ~5 min + 266 s ≈ 16 min, against ~5.4 min for a plain LTO build.
 - **Open decision:** raised by the user during this trial. Is the ~10% worth this
   pipeline in an actively developed simulator? One option is PGO only for
   bulk-experiment binaries, with plain LTO (or mold for fast relinks) for development.
+
+## Profile of the accepted build
+
+**Binary:** `build/ARM_pgo/gem5.fast`, the Trial 6 recipe that is adopted for bulk runs.
+It is profiled exactly as measured, with function-level symbols and no rebuild.
+
+**Method:** `util/perf-opt/profile_region.sh` runs one checkpoint, pinned to core 1, with
+the suite's 10M warmup + 30M detailed window. It attaches the profiler only when
+`fs_run.py` prints its "(measured)" marker, so startup and checkpoint restore are
+excluded; `perf` detaches when gem5 exits.
+- **Checkpoints:** a high-IPC compute one, `706.stockfish_r.2.4`, and a low-IPC
+  memory-heavy one, `723.llvm_r.1.0`.
+- **Tools:** `perf stat -M PipelineL1,PipelineL2` for AMD top-down, `perf record -F 999`
+  for self time, and AMD uProf 5.3 TBP (`-p PID`) as a cross-check.
+
+### Where the host CPU loses time (AMD top-down, Zen 5)
+
+| Metric | 706.stockfish_r.2.4 | 723.llvm_r.1.0 |
+|---|---|---|
+| Host IPC | 2.65 | 2.43 |
+| Host instructions per simulated instruction | 15.4 K | 28.4 K |
+| Front-end bound (bandwidth / latency) | **45.6%** (23.9 / 21.7) | **46.3%** (23.0 / 23.3) |
+| Back-end bound (memory / CPU) | 17.3% (16.4 / 0.8) | 18.4% (17.5 / 0.9) |
+| Bad speculation | 5.6% | 6.3% |
+| Retiring | 31.2% | 28.7% |
+| L1 instruction-cache misses per 1K host instructions | 7.5 | 7.6 |
+| L1 data-cache misses per 1K host instructions | 33 | 31 |
+| iTLB misses (whole region) | ~3.8 K | ~6.1 K |
+
+- **Front end:** even with LTO and PGO, gem5 is **front-end bound on about 46% of issue
+  slots**, split evenly between fetch bandwidth and latency. This matches published gem5
+  profiling (30–42% on Xeon). The cause is instruction-cache capacity and fetch
+  bandwidth, not address translation. iTLB misses are negligible, so huge pages for
+  code would not help.
+- **Back end:** the back-end share is data-cache misses, from pointer-heavy data
+  structures.
+
+### Hotspot functions (self time, measured region)
+
+The profile is flat. The hottest function is about 6.5%, and the region touches 562
+(stockfish) and 944 (llvm) distinct functions.
+
+| # | Function (self time) | 706.stockfish_r.2.4 | 723.llvm_r.1.0 |
+|---|---|---|---|
+| 1 | `o3::CPU::tick` | 6.44% | 6.53% |
+| 2 | `RefCountingPtr<o3::DynInst>::del` | 5.72% | 4.60% |
+| 3 | `o3::IEW::tick` | 4.19% | 3.83% |
+| 4 | `operator delete[]` | 3.68% | 3.31% |
+| 5 | `operator new[]` | 3.27% | 3.37% |
+| 6 | `o3::Fetch::fetch` | 3.75% | 2.84% |
+| 7 | `bp::TAGEBase::updateHistories` | 2.53% | 4.02% |
+| 8 | `o3::InstructionQueue::scheduleReadyInsts` | 3.56% | 2.75% |
+| 9 | `o3::BAC::generateFetchTargets` | 1.36% | 4.57% |
+| 10 | `bp::TAGE_SC_L_TAGE::calculateIndicesAndTags` | 2.53% | 3.03% |
+| 11 | `o3::Fetch::buildInst` | 2.08% | 2.29% |
+| 12 | `o3::InstructionQueue::wakeDependents` | 2.33% | 1.37% |
+| 13 | `o3::Commit::commitInsts` | 2.23% | 1.36% |
+| 14 | `o3::IEW::executeInsts [.cold]` | 2.06% | 1.46% |
+| 15 | `o3::LSQUnit::read` | 1.94% | 1.42% |
+| 16 | `o3::Rename::renameInsts` | 1.82% | 1.49% |
+| 17 | `o3::IEW::dispatchInsts` | 1.91% | 1.31% |
+| 18 | `bp::TAGE_SC_L_64KB_StatisticalCorrector::gPredictions` | 1.59% | 1.44% |
+| 19 | `o3::InstructionQueue::insert` | 1.60% | 1.17% |
+| 20 | `ArmISA::TLB::multiLookup` | 1.26% | 1.40% |
+| 21 | `BaseCache::access` | 1.22% | 1.43% |
+| 22 | `prefetch::Base::probeNotify` | 1.11% | 1.22% |
+| 23 | `bp::BPredUnit::squashHistory` | 0.17% | 1.98% |
+| 24 | `o3::Rename::renameDestRegs` | 1.26% | 0.88% |
+| 25 | `o3::Commit::commit` | 1.14% | 0.93% |
+
+- **uProf cross-check:** uProf TBP over llvm's region gives the same top ten, in nearly
+  the same order: `CPU::tick`, `operator new[]`, `IEW::tick`, the DynInst release,
+  `generateFetchTargets`, `scheduleReadyInsts`, `updateHistories`, tcmalloc's
+  `tc_free_sized`, `calculateIndicesAndTags` and `Fetch::fetch`.
+- **A PGO training gap:** `IEW::executeInsts [.cold]` holds 1.5–2%. PGO placed this path
+  in the cold section because the training workloads rarely took it, but it is hot on
+  the test workloads. Broader training could win a little more.
+
+### Self time by subsystem
+
+| Subsystem | 706.stockfish_r.2.4 | 723.llvm_r.1.0 |
+|---|---|---|
+| Issue queue + IEW + FU pool (`o3/inst_queue.cc`, `o3/iew.cc`) | 19.3% | 15.2% |
+| Heap alloc/free + DynInst refcount release | 14.7% | 13.1% |
+| Branch prediction, TAGE-SC-L (`pred/tage_base.cc`, `tage_sc_l*.cc`, `bpred_unit.cc`) | 8.5% | 13.7% |
+| Fetch + decode (`o3/fetch.cc`) | 9.1% | 8.6% |
+| LSQ (`o3/lsq*.cc`) | 9.0% | 6.0% |
+| O3 `CPU::tick` (`o3/cpu.cc`) | 7.1% | 7.0% |
+| Rename | 6.2% | 4.8% |
+| Commit + ROB | 5.7% | 4.0% |
+| Caches, tags, replacement, packets | 3.8% | 6.4% |
+| ARM TLB / MMU | 3.5% | 4.6% |
+| Decoupled front end (`o3/bac.cc`) | 2.1% | 6.2% |
+| Prefetchers (stride, SMS, BOP, FDP) | 1.3% | 1.6% |
+| Event queue + simulate loop | 0.8% | 0.7% |
+| DRAM controller + DRAMPower | 0.0% | 0.1% |
+| Stats | 0.0% | 0.0% |
+
+### Hand-off to part 2 (code-level work), ranked by expected payoff
+
+1. **Per-instruction heap churn (13–15%).**
+   - *What:* every fetched instruction heap-allocates a `DynInst` (with its arrays) and
+     releases it through `RefCountingPtr::del`. TAGE heap-allocates a `BranchInfo` (with
+     `new int[]` arrays) per prediction. The IQ and the dependency graph use `std::list`
+     nodes and `new DepEntry`.
+   - *Fix:* pooling `DynInst` (ROB-sized) and `BranchInfo` objects attacks this directly.
+2. **Issue queue / IEW scheduling (15–19%):** `scheduleReadyInsts` (per-op-class priority
+   queues), `wakeDependents`, `insert`, `executeInsts`, `dispatchInsts`.
+3. **TAGE-SC-L (8.5–13.7%):** `updateHistories` and `calculateIndicesAndTags` update
+   folded histories for all 36 tables. By code reading (unverified), the even-numbered
+   tables' folded registers duplicate the odd ones and are never read. Also SC
+   `gPredictions` and `squashHistory`.
+4. **Decoupled front end (2–6%):** `generateFetchTargets` probes the BTB at every 4-byte
+   address. It grows with branch mispredictions (6.2% on llvm).
+5. **Set-associative lookups that return a vector by value** (TLB `multiLookup`, cache
+   and BTB tags): one heap allocation per probe.
+6. **Front-end boundness (~46%):** after part 2 shrinks the hot paths, post-link layout
+   (BOLT, available in apt as `bolt-18`) is the remaining build-level lever.
+7. **Correctness:** results depend on the host code-generation target (Trial 5b). Find
+   and fix the host-dependent read (suspect: uninitialized TAGE `BranchInfo` arrays)
+   before any further codegen experiments.
+8. **Outside the KIPS metric:** 50–105 s per run go to startup and checkpoint restore
+   (Baseline). That matters for bulk throughput, not for KIPS.
 

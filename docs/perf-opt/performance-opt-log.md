@@ -415,3 +415,64 @@ the host code-generation target. `x86-64-v2` was bit-identical; `x86-64-v3` is n
 - **Until this is fixed:** never mix gem5 binaries built with different `-march` in
   one experiment. The kratos2 build keeps the generic x86-64 target.
 
+### Trial 6 — profile-guided optimization (PGO)
+
+**Summary:** GCC PGO, trained on three SPEC checkpoints that are **not** in the test
+suite, speeds up all five test checkpoints by 8.1–11.3% on top of Trial 4. Stats are
+bit-identical. **Accepted by the gate.** Whether it belongs in the everyday build is a
+workflow decision, discussed below.
+
+**Key idea:** gem5 is front-end bound with a flat profile: many functions, heavy virtual
+dispatch, and branches whose bias is known only at run time. PGO gives GCC real
+branch probabilities, call counts and hot/cold information, which drive inlining, basic-
+block layout, hot/cold function splitting and loop decisions. Code that never ran in
+training keeps normal optimization, thanks to `-fprofile-partial-training`, so
+workloads outside the training set are not penalized.
+
+**Files and flags targeted:** no source change. Everything is in build dir `ARM_pgo`, on
+top of the accepted Trial 4 configuration (`.fast`, tcmalloc, `ext/` at `-O3`,
+`--with-lto --linker=bfd`).
+1. **Instrumented build** (412 s; 750 MB binary, 74.2 MB `.text`):
+
+   ```
+   CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -fprofile-generate' LINKFLAGS_EXTRA='-fprofile-generate' scons build/ARM_pgo/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+   ```
+
+2. **Training:** `run_suite.sh build/ARM_pgo/gem5.fast pgo-train train` on the three
+   training checkpoints (10M+30M each, concurrent). It wrote 2034 `.gcda` files
+   (74.3 MB). Instrumented speed: 721.gcc_r.2.0 177.7 KIPS, wall 294.4s; 748.flightdm_r.2.2 229.0 KIPS, wall 212.7s; 767.nest_r.1.0 403.5 KIPS, wall 134.9s; 
+3. **Optimized build** in the same dir (266 s). No profile mismatch warnings; the
+   binary has no gcov instrumentation; 73.2 MB binary, 34.84 MB `.text`. The code
+   grows 17% over Trial 4's 29.85 MB because of profile-driven inlining and unrolling
+   on hot paths.
+
+   ```
+   CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -fprofile-use -fprofile-partial-training -Wno-missing-profile' LINKFLAGS_EXTRA='-fprofile-use -fprofile-partial-training' scons build/ARM_pgo/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+   ```
+
+**Test suite (disjoint from training):**
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 710.4 | 789.6 | +11.15% | faster | +51.29% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 757.5 | 822.9 | +8.64% | faster | +50.96% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 523.5 | 566.0 | +8.13% | faster | +50.12% | 1.41% | yes |
+| 723.llvm_r.1.0 | 380.0 | 419.5 | +10.42% | faster | +49.52% | 1.50% | yes |
+| 753.ns3_r.2.0 | 421.8 | 469.3 | +11.27% | faster | +53.17% | 1.57% | yes |
+
+**Verdict: accepted by the gate rule.** Stats are bit-identical on 5/5, and all five are
+faster, by +8.13% to +11.27%.
+- **Cumulative:** +49.5% to +53.2% over the `.opt` baseline.
+- **It generalizes:** the gain appears on workloads the profile never saw (sqlite,
+  stockfish, llvm, ns3; trained on flightdm, gcc, nest).
+
+**Workflow cost:** a PGO build costs instrumented build + training + optimized build,
+about 412 s + ~5 min + 266 s ≈ 16 min, against ~5.4 min for a plain LTO build.
+- **Staleness is gradual.** When source files change, GCC drops the profile only for the
+  functions whose code changed (they fall back to normal optimization under
+  `-fprofile-partial-training`). The rest of the simulator keeps its profile, so
+  retraining is occasional, not per build.
+- **Open decision:** raised by the user during this trial. Is the ~10% worth this
+  pipeline in an actively developed simulator? One option is PGO only for
+  bulk-experiment binaries, with plain LTO (or mold for fast relinks) for development.
+

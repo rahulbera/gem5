@@ -5,13 +5,14 @@ KIPS is the region hostInstRate from stats.txt divided by 1000. Each
 checkpoint is compared with the mean of the --prev trial dirs (the last
 accepted configuration; pass both baseline runs for the first trial) and
 with the mean of the --base trial dirs. The run-to-run spread of the two
-baseline runs is the noise figure. Stats identity is checked against the
-first --base dir with stats_gate.
+baseline runs is the noise figure. Stats identity is checked with
+stats_gate against --ident (default: the first --base dir).
 
 Verdict rule: accepted iff stats are identical on every checkpoint AND a
 majority of checkpoints are faster than the previous configuration.
 
-  kips_table.py --trial T --prev P [--prev P2] --base A --base B [--exclude F]
+  kips_table.py --trial T --prev P [--prev P2] --base A --base B
+                [--ident R] [--exclude F]
 """
 import argparse
 import sys
@@ -34,7 +35,8 @@ def _mean_kips(dirs, cid):
     return sum(vals) / len(vals)
 
 
-def rows(trial, prev_dirs, base_dirs, exclude=frozenset()):
+def rows(trial, prev_dirs, base_dirs, exclude=frozenset(), ident_dir=None):
+    ident = Path(ident_dir) if ident_dir else Path(base_dirs[0])
     out = []
     for cid in stats_gate.trial_checkpoints(trial):
         new = kips(Path(trial) / cid / "stats.txt")
@@ -54,7 +56,7 @@ def rows(trial, prev_dirs, base_dirs, exclude=frozenset()):
         if noise is not None and new != prev and abs(change) <= noise:
             direction += " (within noise)"
         identical = not stats_gate.diff(
-            stats_gate.load(Path(base_dirs[0]) / cid / "stats.txt"),
+            stats_gate.load(ident / cid / "stats.txt"),
             stats_gate.load(Path(trial) / cid / "stats.txt"),
             exclude,
         )
@@ -101,10 +103,11 @@ def main():
     ap.add_argument("--trial", required=True)
     ap.add_argument("--prev", action="append", required=True)
     ap.add_argument("--base", action="append", required=True)
+    ap.add_argument("--ident", default=None)
     ap.add_argument("--exclude", default=None)
     args = ap.parse_args()
     table = rows(args.trial, args.prev, args.base,
-                 stats_gate.load_exclusions(args.exclude))
+                 stats_gate.load_exclusions(args.exclude), args.ident)
     print(markdown(table))
     ok, reason = verdict(table)
     print(f"\nSuggested verdict: {'ACCEPT' if ok else 'REJECT'} ({reason})")

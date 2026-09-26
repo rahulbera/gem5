@@ -75,6 +75,14 @@ class RowsTest(unittest.TestCase):
         (r,) = self.rows(110000, cycles=501)
         self.assertFalse(r["identical"])
 
+    def test_identity_reference_can_differ_from_kips_baseline(self):
+        ref = make_trial(self.tmp.name, "ident-ref", {"c": (100000, 501)})
+        t = make_trial(self.tmp.name, "t-ident", {"c": (110000, 501)})
+        (r,) = kips_table.rows(t, [self.a, self.b], [self.a, self.b],
+                               ident_dir=ref)
+        self.assertTrue(r["identical"])
+        self.assertAlmostEqual(r["vs_base_pct"], 100 * (110 / 101 - 1))
+
 
 def row(faster, identical=True):
     return {"cid": "x", "new": 2.0 if faster else 0.5, "prev": 1.0,

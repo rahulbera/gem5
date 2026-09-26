@@ -61,6 +61,8 @@ tell the next person what not to try again. The design is in
   configuration. The ladder is cumulative.
 - **Noise:** the noise figure is the run-to-run KIPS spread of the two baseline runs.
   Gains inside it are marked "within noise" but still count.
+- **Identity reference:** `baseline-a` for Trial 1. From Trial 2 on it is `trial1-fast`,
+  following the user's ruling on Trial 1 (below).
 
 ## Baseline
 
@@ -88,4 +90,57 @@ tell the next person what not to try again. The design is in
 | 753.ns3_r.2.0 | 1.259 | 308.8 | 304.0 | 306.4 | 1.57% |
 
 ## Trials
+
+### Trial 1 — `.fast` build variant
+
+**Summary:** building `gem5.fast` instead of `gem5.opt` speeds up every test checkpoint
+by 6.4–8.6%. Every stat is identical except one assert-inflated counter (explained
+below). **Accepted.**
+
+**Key idea:** `.opt` is `-O3 -g` with `TRACING_ON=1` and asserts enabled. `.fast` is `-O3`
+with `NDEBUG` and `TRACING_ON=0`. That removes every `assert`/`gem5_assert`, the per-event
+`debug::Event` check, the `DPRINTF` flag tests and the NDEBUG-only O3 instruction-count
+bookkeeping from the hot paths (`src/SConscript:680-682`).
+
+**Files and flags targeted:** build variant only; no source change. Objects are `.fo`, so
+the `.opt` build in the same dir is untouched.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='' LINKFLAGS_EXTRA='' scons build/ARM/gem5.fast -j32 --ignore-style --without-tcmalloc
+```
+
+Built in 319 s. The binary is 94 MB (1126 MB for `.opt`, which carries debug info), with
+42.4 MB of `.text` against 45.2 MB.
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 521.9 | 560.0 | +7.30% | faster | +7.30% | 0.36% | NO |
+| 706.stockfish_r.2.4 | 545.1 | 592.1 | +8.61% | faster | +8.61% | 0.36% | NO |
+| 708.sqlite_r.0.3 | 377.1 | 401.5 | +6.48% | faster | +6.48% | 1.41% | NO |
+| 723.llvm_r.1.0 | 280.6 | 298.6 | +6.41% | faster | +6.41% | 1.50% | NO |
+| 753.ns3_r.2.0 | 306.4 | 328.2 | +7.12% | faster | +7.12% | 1.57% | NO |
+
+**Stats difference:** exactly one stat differs on every checkpoint,
+`board.processor.start.core.executeStats0.numMiscRegReads`. `.fast` counts 8 fewer reads
+on the two stockfish checkpoints and 16 fewer on the other three, out of 23–34 million.
+All other stats are identical, including cycles, instructions, IPC and every predictor,
+cache and pipeline counter.
+- **Root cause:** `src/arch/arm/interrupts.hh:217`, `assert(checkInterrupts())` in
+  `Interrupts::getInterrupt()`.
+  - `checkInterrupts()` reads `HCR_EL2`, then calls `takeInt64()`
+    (`src/arch/arm/interrupts.cc:117-119`), which reads `CPSR`, `SCR_EL3` and `HCR_EL2`.
+  - All four reads go through `o3::CPU::readMiscReg`, which increments the stat
+    (`src/cpu/o3/cpu.cc:953`). Its other helpers use the uncounted `NoEffect` path.
+  - So each evaluation of the assert adds 4 to the counter in `.opt` and nothing in
+    `.fast`. The observed differences, 8 and 16, are exact multiples of 4 and scale with
+    the number of interrupts taken in the region.
+- **Why it doesn't matter:** the reads have no architectural side effect, so the
+  simulation is unchanged. `.opt`'s count is inflated by debug-only code.
+
+**Verdict: accepted, by user ruling.** Grounds: faster on 5/5 (+6.41% to +8.61%), and the
+only stats difference is the assert-inflated counter above.
+- **Gate rebase (ruling 2026-09-26):** from Trial 2 on, the identity reference is the
+  `trial1-fast` run, not `baseline-a`. Every later lever is therefore checked for strict
+  bit-identity with no exclusions.
+- **Debugging:** keep `gem5.opt`, because `--debug-flags` and asserts exist only there.
 

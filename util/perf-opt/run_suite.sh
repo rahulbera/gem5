@@ -25,6 +25,16 @@ if [ -e "$OUT" ]; then
     exit 2
 fi
 mkdir -p "$OUT"
+
+# Start from a quiet machine: the 1-minute load average lags, so right after
+# a previous trial it still reads ~4. Wait (up to 5 min) for it to fall
+# below 1.0 so back-to-back trials start equally quiet.
+waited=0
+while awk '{ exit !($1 >= 1.0) }' /proc/loadavg && [ "$waited" -lt 300 ]; do
+    sleep 10
+    waited=$((waited + 10))
+done
+
 {
     echo "binary: $BIN"
     echo "sha256: $(sha256sum "$BIN" | cut -d' ' -f1)"
@@ -32,6 +42,7 @@ mkdir -p "$OUT"
     echo "role: $ROLE"
     echo "start: $(date -Is)"
     echo "loadavg_at_start: $(cut -d' ' -f1-3 /proc/loadavg)"
+    echo "waited_for_quiet_s: $waited"
     echo "tcmalloc: $(ldd "$BIN" | grep -o 'libtcmalloc[^ ]*' || echo none)"
 } > "$OUT/meta.txt"
 

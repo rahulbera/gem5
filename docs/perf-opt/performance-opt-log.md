@@ -230,3 +230,89 @@ The stockfish drop is larger than its baseline noise. It is more likely a code-l
 side effect than a real cost, since only `ext/` code changed. Expect this lever to help
 DRAM-heavy workloads (like the agentic ones) and to be neutral elsewhere.
 
+### Trial 4 — link-time optimization (LTO), with a linker comparison
+
+**Summary:** building with GCC LTO shrinks `.text` from 42.2 MB to 29.8 MB. It speeds up
+all five checkpoints by 1.3–6.3% (quiet-start rerun, bfd), with stats bit-identical.
+The linker (bfd, gold, mold) matters about as much as run-to-run noise.
+**Accepted, with bfd.**
+
+**Key idea:** gem5 is hundreds of separately compiled files with hot calls across
+them (O3 pipeline stages, caches, TLBs, branch predictor, the event queue). LTO lets
+GCC inline and optimize across those file boundaries and drop unused code.
+- It is opt-in via `--with-lto` (`SConstruct:125-126, 693-708`), which sets
+  `-flto=<jobs>` for the compile and the link. It has been off by default since v21
+  (`RELEASE-NOTES.md:1605`).
+- `ext/` libraries do not get the LTO flags.
+
+**Files and flags targeted:** `--with-lto --linker={bfd,gold,mold}` on top of the Trial 3
+configuration, in a new build dir `ARM_lto`. `apt install mold` (2.30) was needed. The
+first build compiles everything; the gold and mold builds only relink. Objects carry
+`.gnu.lto_*` sections (1346 in `cpu/o3/cpu.fo`), confirming LTO. No source change.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3' LINKFLAGS_EXTRA='' scons build/ARM_lto/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+```
+
+| Linker | Build time | Binary | `.text` |
+|---|---|---|---|
+| bfd | 325 s (full compile + LTO link) | 68.0 MB | 29.85 MB |
+| gold | 93 s (relink only) | 68.2 MB | 29.85 MB |
+| mold | 83 s (relink only) | 87.9 MB | 32.21 MB |
+
+The first pass ran the three linkers back to back. gold and mold started with a 1-minute
+load average of 3.7, which the plan requires to be re-run: the load average lags, so it
+still read high right after the previous trial. `run_suite.sh` now waits for it to fall
+below 1.0 before starting (up to 5 min), and records the wait. All three linkers were
+re-run under that guard. Both passes are shown.
+
+**bfd, quiet-start rerun (`trial4-lto-bfd-r2`), the configuration that was adopted:**
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 676.4 | 710.4 | +5.03% | faster | +36.11% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 712.8 | 757.5 | +6.27% | faster | +38.95% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 496.1 | 523.5 | +5.51% | faster | +38.83% | 1.41% | yes |
+| 723.llvm_r.1.0 | 374.2 | 380.0 | +1.53% | faster | +35.42% | 1.50% | yes |
+| 753.ns3_r.2.0 | 416.3 | 421.8 | +1.32% | faster (within noise) | +37.66% | 1.57% | yes |
+
+**gold, quiet-start rerun:**
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 676.4 | 708.5 | +4.75% | faster | +35.75% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 712.8 | 738.1 | +3.56% | faster | +35.40% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 496.1 | 516.0 | +4.00% | faster | +36.84% | 1.41% | yes |
+| 723.llvm_r.1.0 | 374.2 | 377.1 | +0.76% | faster (within noise) | +34.39% | 1.50% | yes |
+| 753.ns3_r.2.0 | 416.3 | 425.8 | +2.29% | faster | +38.98% | 1.57% | yes |
+
+**mold, quiet-start rerun:**
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 676.4 | 707.2 | +4.56% | faster | +35.51% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 712.8 | 735.5 | +3.19% | faster | +34.93% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 496.1 | 501.2 | +1.02% | faster (within noise) | +32.91% | 1.41% | yes |
+| 723.llvm_r.1.0 | 374.2 | 374.4 | +0.04% | faster (within noise) | +33.43% | 1.50% | yes |
+| 753.ns3_r.2.0 | 416.3 | 425.6 | +2.24% | faster | +38.91% | 1.57% | yes |
+
+First pass, not quiet at start (for the record): bfd faster on 3/5 (mean +2.11%);
+gold on 3/5 (mean +1.58%, started at load 3.74); mold on 5/5 (mean +2.52%, started at
+load 3.77). Stats were bit-identical in all six runs.
+
+| Linker | Mean change, first pass | Mean change, quiet rerun | Average |
+|---|---|---|---|
+| bfd | +2.11% | +3.93% | +3.02% |
+| gold | +1.58% | +3.07% | +2.33% |
+| mold | +2.52% | +2.21% | +2.37% |
+
+**Verdict: accepted, with the bfd linker.** Stats are bit-identical on 5/5 for every
+linker, and the quiet-start rerun is faster on 5/5 for every linker.
+- **Why bfd:** it has the best quiet-start result (mean +3.93%) and the best two-pass
+  average, and it is the system default, which is also simplest for the kratos2 port.
+- **The linker gap is small:** about 1%, the same size as run-to-run noise. This agrees
+  with gem5's own linker benchmark, which found that linkers don't matter for runtime.
+- **mold is worth it for development builds:** it relinks in 83 s. It gives `.text`
+  2.4 MB larger than bfd/gold.
+- **Cumulative:** +35% to +39% over the `.opt` baseline.
+

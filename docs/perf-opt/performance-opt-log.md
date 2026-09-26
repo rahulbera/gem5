@@ -144,3 +144,44 @@ only stats difference is the assert-inflated counter above.
   bit-identity with no exclusions.
 - **Debugging:** keep `gem5.opt`, because `--debug-flags` and asserts exist only there.
 
+### Trial 2 — tcmalloc
+
+**Summary:** linking gperftools' `tcmalloc_minimal` in place of glibc malloc speeds up
+every test checkpoint by 21.2–23.0% on top of `.fast`, with stats bit-identical.
+**Accepted.**
+
+**Key idea:** gem5 allocates and frees objects at a very high rate on its hot paths. That
+includes a heap-allocated `DynInst` per fetched instruction, `Request`/`Packet` pairs
+per memory access, prefetcher candidates, per-lookup candidate vectors in the
+set-associative tags, and branch-predictor history records. tcmalloc's per-thread free
+lists serve these small allocations far more cheaply than glibc's malloc. gem5's
+SConstruct already supports it: it links `tcmalloc_minimal` when the library is present
+and adds `-fno-builtin-malloc/calloc/realloc/free` (`SConstruct:710`, `854-863`). No
+build before this campaign had it: this box lacked `libgoogle-perftools-dev`, and the
+kratos2 compute image lacks it too.
+
+**Files and flags targeted:** `apt install libgoogle-perftools-dev` (2.15), and a new
+build dir `ARM_tcm` without `--without-tcmalloc`. No source change. `ldd` confirms
+`libtcmalloc_minimal.so.4`.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='' LINKFLAGS_EXTRA='' scons build/ARM_tcm/gem5.fast -j32 --ignore-style 
+```
+
+Built in 407 s.
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 560.0 | 688.9 | +23.01% | faster | +31.99% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 592.1 | 719.3 | +21.48% | faster | +31.95% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 401.5 | 492.6 | +22.70% | faster | +30.65% | 1.41% | yes |
+| 723.llvm_r.1.0 | 298.6 | 362.0 | +21.24% | faster | +29.02% | 1.50% | yes |
+| 753.ns3_r.2.0 | 328.2 | 402.8 | +22.74% | faster | +31.47% | 1.57% | yes |
+
+**Verdict: accepted.** Stats are bit-identical to `trial1-fast` on 5/5, and all five are
+faster, by +21.24% to +23.01%. Cumulatively the build is +29.0% to +32.0% over the
+`.opt` baseline.
+- **Why so large:** gem5's own "12%" claim for tcmalloc is exceeded here.
+- **For the kratos2 port:** compute nodes have no tcmalloc, so the port must ship
+  `libtcmalloc_minimal.so.4` next to the binary (with an rpath) or link it statically.
+

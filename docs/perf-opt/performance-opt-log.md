@@ -316,3 +316,42 @@ linker, and the quiet-start rerun is faster on 5/5 for every linker.
   2.4 MB larger than bfd/gold.
 - **Cumulative:** +35% to +39% over the `.opt` baseline.
 
+### Trial 5a — `-march=x86-64-v2`
+
+**Summary:** targeting x86-64-v2 (SSE4.2, POPCNT, SSSE3) on top of Trial 4 makes 4 of 5
+checkpoints slower (−0.2% to −3.4%). Only one is faster, by +1.3%, which is inside its
+noise. Stats are bit-identical. **Rejected.**
+
+**Key idea:** x86-64-v2 is the newest ISA level every kratos2 node class is certain to
+support. It lets GCC use `popcnt` and SSE4.x instead of the generic x86-64 baseline:
+bit-count builtins become single instructions, and some loops and string/memory idioms
+get better code. Since v2 has no FMA, host floating-point results cannot change.
+
+**Files and flags targeted:** `CCFLAGS_EXTRA="-O3 -march=x86-64-v2"` and
+`LINKFLAGS_EXTRA="-march=x86-64-v2"` (the link flag is needed because LTO does code
+generation at link time). New build dir `ARM_v2`. No source change.
+- **Flag check:** the binary has 161 `popcnt` and 1723 SSE4.x instructions; the Trial 4
+  binary has none.
+- **Build:** 316 s, `.text` 29.79 MB.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -march=x86-64-v2' LINKFLAGS_EXTRA='-march=x86-64-v2' scons build/ARM_v2/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+```
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 710.4 | 708.9 | -0.21% | slower (within noise) | +35.83% | 0.36% | yes |
+| 706.stockfish_r.2.4 | 757.5 | 740.1 | -2.29% | slower | +35.77% | 0.36% | yes |
+| 708.sqlite_r.0.3 | 523.5 | 506.0 | -3.35% | slower | +34.18% | 1.41% | yes |
+| 723.llvm_r.1.0 | 380.0 | 374.3 | -1.48% | slower (within noise) | +33.42% | 1.50% | yes |
+| 753.ns3_r.2.0 | 421.8 | 427.2 | +1.28% | faster (within noise) | +39.42% | 1.57% | yes |
+
+**Verdict: rejected.** Stats are bit-identical on 5/5, but only 1/5 is faster (`753.ns3_r`
++1.28%, within noise).
+- **Regressions:** `708.sqlite_r` (−3.35%) and `706.stockfish_r.2.4` (−2.29%) fell by
+  more than their noise; the other two changes are within noise.
+- **Why:** gem5's time goes to pointer chasing, branchy control flow and heap
+  allocation, not to the bit-counting or vector idioms v2 speeds up. So v2 mostly
+  perturbs code layout, and the result is neutral to slightly negative.
+- **Next:** Trial 5b tries x86-64-v3 from the same base (Trial 4), not on top of v2.
+

@@ -355,3 +355,63 @@ CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -march=x86-64-v2' LINKFLAGS_EXTRA='-marc
   perturbs code layout, and the result is neutral to slightly negative.
 - **Next:** Trial 5b tries x86-64-v3 from the same base (Trial 4), not on top of v2.
 
+### Trial 5b — `-march=x86-64-v3 -ffp-contract=off`
+
+**Summary:** targeting x86-64-v3 (AVX, AVX2, BMI1/2, FMA, LZCNT/TZCNT, MOVBE), with
+floating-point contraction disabled, **changes simulation results**. About 2000 stats
+differ on every checkpoint, including simulated time and cache hit/miss counts. It is
+also slower on 4 of 5 checkpoints. **Rejected**, on both grounds.
+
+**Key idea:** v3 adds 256-bit vectors and BMI2 bit manipulation. `-ffp-contract=off` was
+added so that GCC could not fuse multiply-adds, since FMA changes host floating-point
+rounding. The goal was faster simulation with identical results.
+
+**Deployability check:** one tiny `srun --immediate` probe per kratos2 node class:
+- **kratos0–9:** kratos9, Xeon Gold 5118 (Skylake-SP): AVX2, AVX-512.
+- **kratos11–19:** kratos12 and kratos17, Xeon Gold 6226R (Cascade Lake): AVX2, AVX-512.
+- **safari-nexus1:** AMD EPYC 9554 (Zen 4): AVX2, AVX-512.
+- **kratos10:** the single 256-CPU node was busy and is not verified.
+
+So v3 would have been deployable on every verified class.
+
+**Files and flags targeted:** `CCFLAGS_EXTRA="-O3 -march=x86-64-v3 -ffp-contract=off"` and
+the same `-march`/`-ffp-contract` in `LINKFLAGS_EXTRA` (LTO), on top of Trial 4 (not on
+top of 5a). New build dir `ARM_v3`. No source change.
+- **Flag check:** 38,434 `ymm` and 9,514 BMI2 instructions, against zero in Trial 4.
+  Only 3 FMA instructions remain; they come from explicit `fma()` calls, which are
+  exactly rounded either way.
+- **Build:** 317 s, `.text` 30.58 MB.
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -march=x86-64-v3 -ffp-contract=off' LINKFLAGS_EXTRA='-march=x86-64-v3 -ffp-contract=off' scons build/ARM_v3/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+```
+
+| Checkpoint | Previous KIPS | New KIPS | Change | Direction | Cumulative vs baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 710.4 | 706.4 | -0.56% | slower | +35.35% | 0.36% | NO |
+| 706.stockfish_r.2.4 | 757.5 | 735.2 | -2.95% | slower | +34.86% | 0.36% | NO |
+| 708.sqlite_r.0.3 | 523.5 | 505.8 | -3.38% | slower | +34.14% | 1.41% | NO |
+| 723.llvm_r.1.0 | 380.0 | 385.0 | +1.34% | faster (within noise) | +37.23% | 1.50% | NO |
+| 753.ns3_r.2.0 | 421.8 | 412.0 | -2.32% | slower | +34.46% | 1.57% | NO |
+
+Differing stats per checkpoint against `trial1-fast`: 706.stockfish_r.1.1: 2183, 706.stockfish_r.2.4: 1964, 708.sqlite_r.0.3: 2106, 723.llvm_r.1.0: 2407, 753.ns3_r.2.0: 1919.
+
+**Verdict: rejected.**
+1. **Results change.** Every checkpoint diverges: simulated ticks, L1D hits and misses,
+   DRAM traffic, and the instruction count at the stop point (a few instructions either
+   way).
+2. **It isn't faster:** 4/5 slower (−0.56% to −3.38%), one +1.34% within noise.
+
+**Finding for part 2 (correctness, not speed):** the fork's simulation results depend on
+the host code-generation target. `x86-64-v2` was bit-identical; `x86-64-v3` is not.
+- FMA contraction is ruled out: it is disabled, and the 3 remaining FMAs are exactly
+  rounded.
+- `ctz`/`clz` of zero is ruled out: gem5's bit helpers guard zero
+  (`src/base/bitfield.hh`), and the only raw builtins are in SVE code, which is unused.
+- **Leading suspect:** a read of uninitialized or out-of-bounds memory whose contents
+  depend on generated code. One candidate is already known: the TAGE `BranchInfo`
+  arrays allocated with `new int[...]` and no initialization (`src/cpu/pred/tage_base.hh`,
+  and `tableIndices` in `tage_sc_l.cc`).
+- **Until this is fixed:** never mix gem5 binaries built with different `-march` in
+  one experiment. The kratos2 build keeps the generic x86-64 target.
+

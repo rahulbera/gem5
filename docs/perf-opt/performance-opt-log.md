@@ -1225,3 +1225,43 @@ than the paired Trial 11 run. This is the minimum majority.
   instruction (from `trial1-fast` stats), and they are the three that got faster. The stockfish losses (−2.1%, −0.9%) are about the size of the noise.
   The mean over all five is +0.34%.
 - **Binary:** `build/ARM_p2/gem5.fast.t13`, the reference for Trial 14.
+
+### Trial 14 — LSQ: reference accessors, one allocation per request, hoisted forwarding scan
+
+**Summary:** three changes to the load/store queue, bundled. The request accessors return
+references instead of `shared_ptr` copies. Each `Request` is allocated together with its
+reference count. The store-to-load forwarding scan reads the load's address range once.
+All five checkpoints are faster (+0.7% to +5.5%) with stats bit-identical. **Accepted.**
+
+**Key idea:**
+- **Reference accessors:** `LSQRequest::req()` and `mainReq()` returned `RequestPtr`, a
+  `std::shared_ptr<Request>`, by value. gem5 links pthreads, so every copy is an atomic
+  increment plus an atomic decrement. `mainReq()` has about 39 call sites, several per
+  memory access, and some inside the forwarding scan's per-store loop. Both now return
+  `const RequestPtr &`, and `SplitDataRequest::mainReq()` returns its member. The one
+  call site that binds the result to a reference uses it immediately.
+- **One allocation per request:** `LSQRequest::addReq()` did `new Request(...)` and
+  `_reqs.emplace_back(req)`, which allocates the `shared_ptr` control block
+  separately. `std::make_shared<Request>` does both in one allocation. The local
+  accessor lambda now captures `req.get()`, the same raw pointer as before.
+- **Hoisted forwarding scan:** `LSQUnit::read()` recomputed the load's `getVaddr()`,
+  `getSize()` and `isLLSC()` through `mainReq()` for every older store it scanned. They
+  are read once before the scan, and only when the scan will run. Nothing in the loop
+  changes the request before it returns.
+
+**Files targeted:** `src/cpu/o3/lsq.{hh,cc}`, `src/cpu/o3/lsq_unit.cc`. Built in 85 s.
+
+| Checkpoint | Paired reference KIPS (T13) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 759.6 | 776.1 | +2.17% | faster | +9.78% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 787.4 | 809.6 | +2.82% | faster (within noise) | +7.11% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 537.9 | 567.5 | +5.49% | faster | +11.65% | 1.92% | yes |
+| 723.llvm_r.1.0 | 424.2 | 429.0 | +1.14% | faster | +11.89% | 0.02% | yes |
+| 753.ns3_r.2.0 | 450.4 | 453.4 | +0.67% | faster (within noise) | +8.27% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference too), and all
+five are faster than the paired Trial 13 run, by +0.67% to +5.49%.
+- **Larger than estimated:** the deep dive put these items at 0.4–1.3%. The atomic
+  reference-count traffic was not in its allocator model, which counted only
+  allocations and frees.
+- **Binary:** `build/ARM_p2/gem5.fast.t14`, the reference for Trial 15.

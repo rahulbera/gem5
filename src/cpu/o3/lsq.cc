@@ -953,7 +953,7 @@ LSQ::SplitDataRequest::mainPacket()
     return _mainPacket;
 }
 
-RequestPtr
+const RequestPtr &
 LSQ::SplitDataRequest::mainReq()
 {
     return _mainReq;
@@ -1088,7 +1088,9 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
                                                    byte_enable.end());
 
     if (inactive_tail_size != byte_enable.size()) {
-        auto req = new Request(
+        // make_shared allocates the Request and its reference count
+        // together, instead of in two allocations.
+        auto req = std::make_shared<Request>(
                 addr, size-inactive_tail_size, _flags, _inst->requestorId(),
                 _inst->pcState().instAddr(), _inst->contextId(),
                 std::move(_amo_op));
@@ -1100,7 +1102,8 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
         /* If the request is marked as NO_ACCESS, setup a local access */
         if (_flags.isSet(Request::NO_ACCESS)) {
             req->setLocalAccessor(
-                [this, req](gem5::ThreadContext *tc, PacketPtr pkt) -> Cycles
+                [this, req = req.get()](gem5::ThreadContext *tc,
+                                        PacketPtr pkt) -> Cycles
                 {
                     if ((req->isHTMStart() || req->isHTMCommit())) {
                         auto& inst = this->instruction();
@@ -1113,7 +1116,7 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
             );
         }
 
-        _reqs.emplace_back(req);
+        _reqs.push_back(std::move(req));
     }
 }
 

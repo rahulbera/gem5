@@ -61,6 +61,11 @@ tell the next person what not to try again. The design is in
   configuration. The ladder is cumulative.
 - **Noise:** the noise figure is the run-to-run KIPS spread of the two baseline runs.
   Gains inside it are marked "within noise" but still count.
+  - **Caveat (added 2026-09-27):** that figure understates the real noise. The same
+    Trial 4 bfd binary, run twice, differed by 0.95%, 1.55%, 4.06%, 2.55% and 1.71% on
+    the five checkpoints (see Trial 4). Changes below ~4% are therefore not reliably
+    distinguishable from noise in this protocol. The "within noise" column still uses
+    the baseline figure, as the plan specified.
 - **Identity reference:** `baseline-a` for Trial 1. From Trial 2 on it is `trial1-fast`,
   following the user's ruling on Trial 1 (below).
 
@@ -76,7 +81,10 @@ tell the next person what not to try again. The design is in
 - **Two identical runs** (`baseline-a` 22:39, `baseline-b` 22:43, 2026-09-26) were
   **bit-identical on every stat of all five checkpoints**. No stat is nondeterministic
   in these windows, so `nondeterministic-stats.txt` excludes nothing.
-- **Noise figure:** the run-to-run KIPS spread is **0.36–1.57%**.
+- **Noise figure:** the run-to-run KIPS spread is **0.36–1.57%**. Neither run waited
+  for a quiet machine (that guard was added in Trial 4): `baseline-a` started at a
+  1-minute load average of 2.74 and `baseline-b` at 1.92. The 5- and 15-minute averages
+  were higher still (12.95/16.63 and 7.74/13.78), so the load was falling at both starts.
 - **Fixed cost per run:** wall time per run minus the region's `hostSeconds` is 50–105 s.
   That covers startup, resource lookup, restore and the 10M warmup. The detailed region
   is 55–108 s.
@@ -327,12 +335,19 @@ linker, and the quiet-start rerun is faster on 5/5 for every linker.
 - **mold is worth it for development builds:** it relinks in 83 s. It gives `.text`
   2.4 MB larger than bfd/gold.
 - **Cumulative:** +35% to +39% over the `.opt` baseline.
+- **Same-binary noise:** the two bfd runs (first pass and quiet rerun) used the same
+  binary, yet differed by 0.95% (stockfish.1.1), 1.55% (stockfish.2.4), 4.06% (sqlite),
+  2.55% (llvm) and 1.71% (ns3). The first pass started at load 1.34, so part of this is
+  load, but it bounds how much any single trial below ~4% can be trusted.
+- **Local binaries:** the adopted binary is `build/ARM_lto/gem5.fast.bfd`.
+  `build/ARM_lto/gem5.fast` is whichever linker ran last, which is mold.
 
 ### Trial 5a — `-march=x86-64-v2`
 
-**Summary:** targeting x86-64-v2 (SSE4.2, POPCNT, SSSE3) on top of Trial 4 makes 4 of 5
-checkpoints slower (−0.2% to −3.4%). Only one is faster, by +1.3%, which is inside its
-noise. Stats are bit-identical. **Rejected.**
+**Summary:** targeting x86-64-v2 (SSE4.2, POPCNT, SSSE3) on top of Trial 4 has no
+measurable effect on speed. Against the adopted bfd run, 4 of 5 checkpoints are slower
+(−0.2% to −3.4%); against the first run of the same bfd binary, 3 of 5 are faster. Every
+change is inside the same-binary spread. Stats are bit-identical. **Not adopted.**
 
 **Key idea:** x86-64-v2 is the newest ISA level every kratos2 node class is certain to
 support. It lets GCC use `popcnt` and SSE4.x instead of the generic x86-64 baseline:
@@ -358,21 +373,35 @@ CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -march=x86-64-v2' LINKFLAGS_EXTRA='-marc
 | 723.llvm_r.1.0 | 380.0 | 374.3 | -1.48% | slower (within noise) | +33.42% | 1.50% | yes |
 | 753.ns3_r.2.0 | 421.8 | 427.2 | +1.28% | faster (within noise) | +39.42% | 1.57% | yes |
 
-**Verdict: rejected.** Stats are bit-identical on 5/5, but only 1/5 is faster (`753.ns3_r`
-+1.28%, within noise).
-- **Regressions:** `708.sqlite_r` (−3.35%) and `706.stockfish_r.2.4` (−2.29%) fell by
-  more than their noise; the other two changes are within noise.
-- **Why:** gem5's time goes to pointer chasing, branchy control flow and heap
-  allocation, not to the bit-counting or vector idioms v2 speeds up. So v2 mostly
-  perturbs code layout, and the result is neutral to slightly negative.
+**Verdict: not adopted; no measurable effect.** Stats are bit-identical on 5/5, but only
+1/5 is faster than the reference (`753.ns3_r` +1.28%, within noise), so the rule is not
+met.
+- **The verdict depends on the reference run.** Against the first-pass run of the same
+  bfd binary (`trial4-lto-bfd`), v2 is faster on 3/5 and would pass:
+
+  | Checkpoint | v2 vs first bfd run | v2 vs bfd rerun (reference) |
+  |---|---|---|
+  | 706.stockfish_r.1.1 | −1.16% | −0.21% |
+  | 706.stockfish_r.2.4 | −0.77% | −2.29% |
+  | 708.sqlite_r.0.3 | +0.66% | −3.35% |
+  | 723.llvm_r.1.0 | +1.07% | −1.48% |
+  | 753.ns3_r.2.0 | +3.03% | +1.28% |
+
+  Every change is inside the 0.95–4.06% spread between the two runs of that one
+  binary, so neither a gain nor a loss is demonstrated.
+- **Why no effect is plausible:** gem5's time goes to pointer chasing, branchy control
+  flow and heap allocation, not to the bit-counting or vector idioms v2 speeds up. v2
+  mostly perturbs code layout.
+- **Not adopted** because it has no demonstrated benefit and is one more build knob.
 - **Next:** Trial 5b tries x86-64-v3 from the same base (Trial 4), not on top of v2.
 
 ### Trial 5b — `-march=x86-64-v3 -ffp-contract=off`
 
 **Summary:** targeting x86-64-v3 (AVX, AVX2, BMI1/2, FMA, LZCNT/TZCNT, MOVBE), with
 floating-point contraction disabled, **changes simulation results**. About 2000 stats
-differ on every checkpoint, including simulated time and cache hit/miss counts. It is
-also slower on 4 of 5 checkpoints. **Rejected**, on both grounds.
+differ on every checkpoint, including simulated time and cache hit/miss counts. A rerun
+of the same binary reproduces its results exactly, so the change is deterministic. It is
+not measurably faster either. **Rejected** because results change.
 
 **Key idea:** v3 adds 256-bit vectors and BMI2 bit manipulation. `-ffp-contract=off` was
 added so that GCC could not fuse multiply-adds, since FMA changes host floating-point
@@ -381,7 +410,8 @@ rounding. The goal was faster simulation with identical results.
 **Deployability check:** one tiny `srun --immediate` probe per kratos2 node class:
 - **kratos0–9:** kratos9, Xeon Gold 5118 (Skylake-SP): AVX2, AVX-512.
 - **kratos11–19:** kratos12 and kratos17, Xeon Gold 6226R (Cascade Lake): AVX2, AVX-512.
-- **safari-nexus1:** AMD EPYC 9554 (Zen 4): AVX2, AVX-512.
+- **safari-nexus1:** AMD EPYC 9554 (Zen 4): AVX2, AVX-512. (Later excluded from all
+  runs by the user.)
 - **kratos10:** the single 256-CPU node was busy and is not verified.
 
 So v3 would have been deployable on every verified class.
@@ -408,14 +438,29 @@ CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA='-O3 -march=x86-64-v3 -ffp-contract=off' LINK
 
 Differing stats per checkpoint against `trial1-fast`: 706.stockfish_r.1.1: 2183, 706.stockfish_r.2.4: 1964, 708.sqlite_r.0.3: 2106, 723.llvm_r.1.0: 2407, 753.ns3_r.2.0: 1919.
 
+**Determinism check (2026-09-27).** The same v3 binary (identical sha256) was rerun with
+a quiet start (`trial5b-v3-r2`, load 0.08). Its stats are **bit-identical to the first
+v3 run on 5/5**. The divergence from `trial1-fast` is therefore not run-to-run
+nondeterminism: it is a deterministic function of how the binary was compiled.
+
+| Checkpoint | v3 first run KIPS | v3 rerun KIPS | Rerun vs Trial 4 (bfd rerun) |
+|---|---|---|---|
+| 706.stockfish_r.1.1 | 706.4 | 718.4 | +1.13% |
+| 706.stockfish_r.2.4 | 735.2 | 756.8 | −0.09% |
+| 708.sqlite_r.0.3 | 505.8 | 520.6 | −0.55% |
+| 723.llvm_r.1.0 | 385.0 | 388.0 | +2.11% |
+| 753.ns3_r.2.0 | 412.0 | 415.0 | −1.61% |
+
 **Verdict: rejected.**
-1. **Results change.** Every checkpoint diverges: simulated ticks, L1D hits and misses,
-   DRAM traffic, and the instruction count at the stop point (a few instructions either
-   way).
-2. **It isn't faster:** 4/5 slower (−0.56% to −3.38%), one +1.34% within noise.
+1. **Results change**, deterministically. Every checkpoint diverges: simulated ticks,
+   L1D hits and misses, DRAM traffic, and the instruction count at the stop point (a
+   few instructions either way).
+2. **It isn't measurably faster:** the first run was slower on 4/5 (−0.56% to −3.38%),
+   the rerun faster on 2/5 (−1.61% to +2.11%). Both are inside the same-binary spread.
 
 **Finding for part 2 (correctness, not speed):** the fork's simulation results depend on
-the host code-generation target. `x86-64-v2` was bit-identical; `x86-64-v3` is not.
+the host code-generation target. `x86-64-v2` was bit-identical; `x86-64-v3` is not, and
+it reproduces its own different results exactly on a rerun.
 - FMA contraction is ruled out: it is disabled, and the 3 remaining FMAs are exactly
   rounded.
 - `ctz`/`clz` of zero is ruled out: gem5's bit helpers guard zero
@@ -484,9 +529,10 @@ about 412 s + ~5 min + 266 s ≈ 16 min, against ~5.4 min for a plain LTO build.
   functions whose code changed (they fall back to normal optimization under
   `-fprofile-partial-training`). The rest of the simulator keeps its profile, so
   retraining is occasional, not per build.
-- **Open decision:** raised by the user during this trial. Is the ~10% worth this
-  pipeline in an actively developed simulator? One option is PGO only for
-  bulk-experiment binaries, with plain LTO (or mold for fast relinks) for development.
+- **Decision (user, 2026-09-27):** the user asked whether the ~10% is worth this
+  pipeline in an actively developed simulator, and chose **PGO for bulk-experiment
+  binaries only**. Development builds use the Trial 4 recipe without PGO (mold is an
+  option for fast relinks).
 
 ## Profile of the accepted build
 
@@ -501,6 +547,9 @@ excluded; `perf` detaches when gem5 exits.
   memory-heavy one, `723.llvm_r.1.0`.
 - **Tools:** `perf stat -M PipelineL1,PipelineL2` for AMD top-down, `perf record -F 999`
   for self time, and AMD uProf 5.3 TBP (`-p PID`) as a cross-check.
+- **Not collected:** call graphs (`perf record -g`) and IBS. The tables below are
+  self time only; inclusive costs and precise per-instruction attribution are left to
+  part 2.
 
 ### Where the host CPU loses time (AMD top-down, Zen 5)
 
@@ -518,9 +567,13 @@ excluded; `perf` detaches when gem5 exits.
 
 - **Front end:** even with LTO and PGO, gem5 is **front-end bound on about 46% of issue
   slots**, split evenly between fetch bandwidth and latency. This matches published gem5
-  profiling (30–42% on Xeon). The cause is instruction-cache capacity and fetch
-  bandwidth, not address translation. iTLB misses are negligible, so huge pages for
-  code would not help.
+  profiling (30–42% on Xeon). Instruction-cache capacity and fetch bandwidth are the
+  likely cause.
+- **Address translation:** the iTLB row is perf's generic `iTLB-load-misses`, which on
+  Zen counts misses in both the L1 and L2 iTLB, i.e. page walks. Those are negligible.
+  L1 iTLB misses that hit in the L2 TLB were not counted. So page walks are ruled out,
+  but not all translation cost; huge pages for code look unlikely to help and were not
+  tried.
 - **Back end:** the back-end share is data-cache misses, from pointer-heavy data
   structures.
 
@@ -561,9 +614,11 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
   the same order: `CPU::tick`, `operator new[]`, `IEW::tick`, the DynInst release,
   `generateFetchTargets`, `scheduleReadyInsts`, `updateHistories`, tcmalloc's
   `tc_free_sized`, `calculateIndicesAndTags` and `Fetch::fetch`.
-- **A PGO training gap:** `IEW::executeInsts [.cold]` holds 1.5–2%. PGO placed this path
-  in the cold section because the training workloads rarely took it, but it is hot on
-  the test workloads. Broader training could win a little more.
+- **`IEW::executeInsts [.cold]` holds 1.5–2%.** That is a sizeable share for code GCC
+  placed in the cold section. It is not a PGO artifact: the non-PGO Trial 4 binary has
+  an `executeInsts() [clone .cold]` too, since GCC also splits cold paths from static
+  heuristics. What in it is hot was not examined, and whether broader PGO training
+  would move it is untested.
 
 ### Self time by subsystem
 
@@ -605,9 +660,10 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
    and BTB tags): one heap allocation per probe.
 6. **Front-end boundness (~46%):** after part 2 shrinks the hot paths, post-link layout
    (BOLT, available in apt as `bolt-18`) is the remaining build-level lever.
-7. **Correctness:** results depend on the host code-generation target (Trial 5b). Find
-   and fix the host-dependent read (suspect: uninitialized TAGE `BranchInfo` arrays)
-   before any further codegen experiments.
+7. **Correctness:** results depend on the host code-generation target (Trial 5b). The
+   dependence is deterministic: a v3 binary reproduces its own results exactly. Find
+   and fix the codegen-dependent behavior (suspect: uninitialized TAGE `BranchInfo`
+   arrays) before any further codegen experiments.
 8. **Outside the KIPS metric:** 50–105 s per run go to startup and checkpoint restore
    (Baseline). That matters for bulk throughput, not for KIPS.
 
@@ -632,8 +688,10 @@ CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA="-O3" LINKFLAGS_EXTRA="-Wl,-rpath,/home/rahbe
   - `libprotobuf.so.23` is missing on `safari-nexus1`. The first agentic validation
     failed there with "cannot open shared object file", before the user excluded that
     node.
-  - Both libraries now live in `/home/rahbera/agentic-cpu/lib` on NFS, and the binary's
-    RUNPATH ends with that dir, so nodes without them fall back to the copies.
+  - Both libraries now live in `/home/rahbera/agentic-cpu/lib` on NFS. The binary's
+    RUNPATH is the Python config dir, then `/usr/lib/x86_64-linux-gnu`, then that NFS
+    dir. Nodes that have their own copy load it, and nodes without it fall back to the
+    NFS copies.
 - **Node exclusion:** every Slurm script now carries `#SBATCH --exclude=safari-nexus1`,
   on the user's instruction.
 
@@ -644,19 +702,26 @@ allocated CPU. The window is 10M + 30M.
 
 | Checkpoint | Node (CPU) | A: old `.opt` KIPS | B: new `.fast` KIPS | Speedup | Stats |
 |---|---|---|---|---|---|
-| SPEC `723.llvm_r.1.0` | kratos0 (Xeon Gold 5118), own core each | 82.4 | 117.0 | **+42.0%** | A and B each bit-identical to the local runs of the same variant |
-| agentic `gin-2121/cpt.0` | kratos10, separate cores | 78.9 | 115.9 | **+46.9%** | identical except `numMiscRegReads` (the Trial 1 assert artifact); IPC 0.817 both |
-| SPEC `723.llvm_r.1.0` | kratos6 (Xeon Gold 5118), **SMT siblings 9/33** | 57.5 | 66.6 | +15.8% | bit-identical |
+| SPEC `723.llvm_r.1.0` | kratos0 (Xeon Gold 5118), separate physical cores | 82.4 | 117.0 | **+42.0%** | A and B each bit-identical to the local runs of the same variant |
+| agentic `gin-2121/cpt.0` | kratos10, separate cores | 78.9 | 115.9 | **+46.9%** | identical except `numMiscRegReads` (the Trial 1 assert artifact); stats IPC 0.828 both (`virt_run.py` prints "IPC (measured)" 0.817) |
+| SPEC `723.llvm_r.1.0` | kratos6 (Xeon Gold 5118), **SMT siblings 9/33** | 57.5 | 66.6 | +15.8% | A and B each bit-identical to the local runs of the same variant |
 
-- **Results are portable across builds and hosts:** the cluster `.opt` (gcc 11.4)
-  matches the local `.opt` (g++ 12.4), and the cluster `.fast` (g++ 12.1) matches the
-  local `.fast` (g++ 12.4), bit for bit. At the generic x86-64 target, results do not
-  depend on compiler version or host, so local and cluster numbers can be compared
-  directly. Only the codegen target matters (Trial 5b).
+"Separate physical cores" means the two runs did not share a core with each other.
+Whether other jobs ran on those cores' SMT siblings was not recorded.
+
+- **Results matched across compilers and hosts, on what was tested:** on SPEC
+  `723.llvm_r.1.0`, the cluster `.opt` (gcc 11.4) matches the local `.opt` (g++ 12.4),
+  and the cluster `.fast` (g++ 12.1, with and without PGO) matches the local `.fast`
+  (g++ 12.4), bit for bit. The agentic checkpoint was compared only between cluster
+  nodes (kratos10 and kratos0, same build). One checkpoint is evidence, not proof,
+  that results at the generic x86-64 target are independent of compiler version and
+  host. Re-check before comparing local and cluster numbers on other workloads, since
+  the codegen target does matter (Trial 5b).
 - **SMT sharing hurts gem5 badly.** The cluster allocates by logical CPU
   (`SelectTypeParameters=CR_CPU_MEMORY`), so a job can share a physical core with
   another job. On the shared core, each gem5 ran 30% (`.opt`) to 43% (`.fast`) slower
-  than on its own core, and the new binary's advantage shrank from +42% to +16%. The
+  than on separate cores (the kratos0 run), and the new binary's advantage shrank from
+  +42% to +16%. The
   front-end-bound workload suffers most from a sibling competing for fetch and decode.
   - **For clean speed measurements:** use `--hint=nomultithread`.
   - **For bulk throughput:** packing siblings still yields more total work per node,
@@ -688,14 +753,16 @@ checkpoint: `gson-1093/cpt.2` (Java), `ripgrep-2209/cpt.3` (Rust), `jq-2598/cpt.
        scons build/ARM_pgo/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
    ```
 
-| Checkpoint (kratos0, own core each) | Non-PGO `.fast` KIPS | PGO `.fast` KIPS | PGO gain | Stats |
+| Checkpoint (kratos0, separate physical cores) | Non-PGO `.fast` KIPS | PGO `.fast` KIPS | PGO gain | Stats |
 |---|---|---|---|---|
 | agentic `gin-2121/cpt.0` (not in training) | 84.7 | 101.1 | **+19.4%** | bit-identical to non-PGO, and to the kratos10 run |
 | SPEC `723.llvm_r.1.0` (not in training) | 115.6 | 136.1 | **+17.7%** | bit-identical to local `trial1-fast` |
 
 The agentic-trained profile helps the SPEC checkpoint too. On Skylake-SP the PGO gain
-(+18–19%) is larger than on Zen 5 (+8–11%). The cluster PGO binary runs 1.65× faster
-than the old cluster `.opt` on SPEC `723.llvm_r` (136.1 vs 82.4 KIPS, same node class).
+(+18–19%) is larger than on Zen 5 (+8–11%). The cluster PGO binary runs about 1.65×
+faster than the old cluster `.opt` on SPEC `723.llvm_r` (136.1 vs 82.4 KIPS). Those two
+numbers come from two different jobs, both on kratos0. The non-PGO `.fast`, which ran in
+both jobs, measured 117.0 and 115.6 KIPS, so job-to-job variation is about 1%.
 
 **Bulk-run binary:** `/home/rahbera/agentic-cpu/gem5/build/ARM_pgo/gem5.fast` (PGO,
 agentic-trained). **Development binary:** `build/ARM_rel/gem5.fast` (the same recipe
@@ -709,19 +776,27 @@ without PGO). Keep `build/ARM/gem5.opt` for debugging (`--debug-flags`, asserts)
 | 2 | tcmalloc | accepted | +21.2–23.0% |
 | 3 | `ext/` at `-O3` | accepted narrowly; later shown to be layout noise | −1.8 … +3.4% |
 | 4 | LTO (bfd; gold and mold compared) | accepted | +1.3–6.3% (quiet rerun) |
-| 5a | `-march=x86-64-v2` | rejected: not faster | −3.4 … +1.3% |
-| 5b | `-march=x86-64-v3 -ffp-contract=off` | rejected: **changes results**, and slower | −3.4 … +1.3% |
+| 5a | `-march=x86-64-v2` | not adopted: no measurable effect | −3.4 … +1.3% vs the adopted bfd run; −1.2 … +3.0% vs the first run of that binary |
+| 5b | `-march=x86-64-v3 -ffp-contract=off` | rejected: **changes results** (deterministically); not measurably faster | −3.4 … +1.3% (first run); −1.6 … +2.1% (rerun) |
 | 6 | PGO | accepted, **for bulk-run binaries only** (user decision) | +8.1–11.3% |
 
 - **Local cumulative:** the development recipe (1–4) is +35–39% over the `.opt`
   baseline; with PGO it is **+49.5–53.2%**. Stats are bit-identical throughout, except
   Trial 1's assert-inflated `numMiscRegReads`.
+- **Noise:** the same binary run twice varied by up to 4.06%. Effects smaller than
+  that (Trial 3, the linker choice in Trial 4, Trial 5a, 5b's speed) are not
+  demonstrated in either direction. Trials 1, 2 and 6 are well outside it; Trial 4's
+  LTO gain (+1.3–6.3%) is at its edge.
 - **On kratos2:** the development recipe is +42% (SPEC) and +47% (agentic) over the old
   cluster `.opt`. PGO adds +18–19%, for about **1.65×** on SPEC against the old binary on
-  the same node class.
+  the same node class (two separate jobs; see the cluster port).
+- **Binaries:** locally, `build/ARM_lto/gem5.fast.bfd` (development) and
+  `build/ARM_pgo/gem5.fast` (PGO). On kratos2, `build/ARM_rel/gem5.fast` (development)
+  and `build/ARM_pgo/gem5.fast` (bulk runs, agentic-trained PGO).
 - **Unused modules** were never the problem: nothing un-instantiated runs, and the
   profile shows no time in Ruby, SystemC or the GPU.
 - **What gem5 spends its time on:** it is ~46% front-end bound. Its time goes to O3
   scheduling, per-instruction heap churn and TAGE-SC-L; that is part 2's work list.
-- **Open correctness item:** results depend on the codegen target (Trial 5b). Suspect
-  the uninitialized TAGE `BranchInfo` arrays.
+- **Open correctness item:** results depend on the codegen target (Trial 5b),
+  deterministically: a rerun of the v3 binary reproduced its own results exactly.
+  Suspect the uninitialized TAGE `BranchInfo` arrays.

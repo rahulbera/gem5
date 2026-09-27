@@ -631,8 +631,8 @@ BAC::generateFetchTargets(ThreadID tid, bool &status_change)
         FetchTargetPtr curFT = newFetchTarget(tid, cur_pc);
         num_ft++;
 
-        bool branch_found = false;
         bool predict_taken = false;
+        StaticInstPtr staticInst = nullptr;
 
         // Scan through the instruction stream and search for branches.
         // The BTB contains only branches where taken at least once.
@@ -640,40 +640,22 @@ BAC::generateFetchTargets(ThreadID tid, bool &status_change)
         // stream or the maximum search width per cycle was reached.
         // In the first case make the branch prediction and in the later
         // advance the PC to start the search at the following address.
-        while (true) {
-
-            // Check if the current search address can be found in the BTB
-            // indicating the end of the branch.
-            branch_found = bpu->BTBValid(tid, search_addr);
-
-            // If its a branch stop searching
-            if (branch_found) {
-                break;
-            }
-
-            // If its not a branch check if the maximum search width is
-            // reached. If yes stop searching.
-            if ((search_addr - start_addr) >= fetchTargetWidth) {
-                break;
-            }
-
-            // Continue searching.
-            search_addr += minInstSize;
-        }
+        // As the current BPU implementation requires the static
+        // instruction, the search also returns it from the BTB.
+        bool branch_found = bpu->BTBFindFirstBranch(tid, start_addr,
+                fetchTargetWidth, minInstSize, search_addr, staticInst);
 
         // Update the current PC to point to the last instruction
         // in the fetch target
         cur_pc.set(search_addr);
 
         // Make a copy of the current PC since the BPU will update it.
-        std::unique_ptr<PCStateBase> next_pc(cur_pc.clone());
-        StaticInstPtr staticInst = nullptr;
+        // The copy lives in a reused per-thread object rather than a heap
+        // clone per fetch target; set() copies every field of the PC.
+        std::unique_ptr<PCStateBase> &next_pc = nextFTPC[tid];
+        set(next_pc, cur_pc);
 
         if (branch_found) {
-            // Branch found in instruction stream. As the current
-            // BPU implementation required the static instruction we need to
-            // look it up from the BTB.
-            staticInst = bpu->BTBGetInst(tid, cur_pc.instAddr());
             assert(staticInst);
 
             // Now make the actual prediction. Note the BPU will advance
@@ -876,7 +858,7 @@ BAC::updatePreDecode(ThreadID tid, const InstSeqNum seqNum,
         bpu->branchPlaceholder(tid, pc.instAddr(), inst->isUncondCtrl(),
                                hist->bpHistory);
 
-        set(hist->target, std::unique_ptr<PCStateBase>(pc.clone()));
+        set(hist->target, pc);
         inst->advancePC(*hist->target);
     }
 

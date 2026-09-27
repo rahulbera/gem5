@@ -169,7 +169,7 @@ class MemDepUnit
     /** Wakes any dependents of a memory instruction. */
     void wakeDependents(const DynInstPtr &inst);
 
-    typedef typename std::list<DynInstPtr>::iterator ListIt;
+    typedef typename DynInstList::iterator ListIt;
 
     class MemDepEntry;
 
@@ -231,10 +231,10 @@ class MemDepUnit
     MemDepHash memDepHash;
 
     /** A list of all instructions in the memory dependence unit. */
-    std::list<DynInstPtr> instList[MaxThreads];
+    DynInstList instList[MaxThreads];
 
     /** A list of all instructions that are going to be replayed. */
-    std::list<DynInstPtr> instsToReplay;
+    DynInstList instsToReplay;
 
     /** The memory dependence predictor.  It is accessed upon new
      *  instructions being added to the IQ, and responds by telling

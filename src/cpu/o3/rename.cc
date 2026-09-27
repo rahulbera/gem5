@@ -1149,20 +1149,20 @@ Rename::unblock(ThreadID tid)
 void
 Rename::doSquash(const InstSeqNum &squashed_seq_num, ThreadID tid)
 {
-    auto hb_it = historyBuffer[tid].begin();
+    auto &history = historyBuffer[tid];
 
     // After a syscall squashes everything, the history buffer may be empty
     // but the ROB may still be squashing instructions.
     // Go through the most recent instructions, undoing the mappings
     // they did and freeing up the registers.
-    while (!historyBuffer[tid].empty() &&
-           hb_it->instSeqNum > squashed_seq_num) {
-        assert(hb_it != historyBuffer[tid].end());
+    while (!history.empty() &&
+           history.front().instSeqNum > squashed_seq_num) {
+        const RenameHistory &entry = history.front();
 
         DPRINTF(Rename, "[tid:%i] Removing history entry with sequence "
                 "number %i (archReg: %d, newPhysReg: %d, prevPhysReg: %d).\n",
-                tid, hb_it->instSeqNum, hb_it->archReg.index(),
-                hb_it->newPhysReg->index(), hb_it->prevPhysReg->index());
+                tid, entry.instSeqNum, entry.archReg.index(),
+                entry.newPhysReg->index(), entry.prevPhysReg->index());
 
         // Undo the rename mapping only if it was really a change.
         // Special regs that are not really renamed (like misc regs
@@ -1170,24 +1170,24 @@ Rename::doSquash(const InstSeqNum &squashed_seq_num, ThreadID tid)
         // is the same as the old one.  While it would be merely a
         // waste of time to update the rename table, we definitely
         // don't want to put these on the free list.
-        if (hb_it->newPhysReg != hb_it->prevPhysReg) {
+        if (entry.newPhysReg != entry.prevPhysReg) {
             // Tell the rename map to set the architected register to the
             // previous physical register that it was renamed to.
-            renameMap[tid]->setEntry(hb_it->archReg, hb_it->prevPhysReg);
+            renameMap[tid]->setEntry(entry.archReg, entry.prevPhysReg);
 
             // The phys regs can still be owned by squashing but
             // executing instructions in IEW at this moment. To avoid
             // ownership hazard in SMT CPU, we delay the freelist update
             // until they are indeed squashed in the commit stage.
-            freeingInProgress[tid].push_back(hb_it->newPhysReg);
+            freeingInProgress[tid].push_back(entry.newPhysReg);
         }
 
         // Garfield MRN aliasing: an aliased load also allocated a
         // private physreg (aliasLoadReg) that the map never pointed at;
         // release it on squash. Its refcount is 1, so it goes back on the free
         // list.
-        if (hb_it->aliased && hb_it->aliasLoadReg) {
-            freeingInProgress[tid].push_back(hb_it->aliasLoadReg);
+        if (entry.aliased && entry.aliasLoadReg) {
+            freeingInProgress[tid].push_back(entry.aliasLoadReg);
         }
 
         // mark the speculative register as ready in the scoreboard as
@@ -1203,21 +1203,21 @@ Rename::doSquash(const InstSeqNum &squashed_seq_num, ThreadID tid)
         // ready (that would falsely wake the producer's consumers). Mark the
         // load's own private reg ready instead, mirroring a normal squashed
         // dest.
-        if (hb_it->aliased) {
-            if (hb_it->aliasLoadReg) {
-                scoreboard->setReg(hb_it->aliasLoadReg);
+        if (entry.aliased) {
+            if (entry.aliasLoadReg) {
+                scoreboard->setReg(entry.aliasLoadReg);
             }
         } else {
-            scoreboard->setReg(hb_it->newPhysReg);
+            scoreboard->setReg(entry.newPhysReg);
         }
 
         // Notify potential listeners that the register mapping needs to be
         // removed because the instruction it was mapped to got squashed. Note
-        // that this is done before hb_it is incremented.
-        ppSquashInRename->notify(std::make_pair(hb_it->instSeqNum,
-                                                hb_it->newPhysReg));
+        // that this is done before the entry is removed.
+        ppSquashInRename->notify(std::make_pair(entry.instSeqNum,
+                                                entry.newPhysReg));
 
-        historyBuffer[tid].erase(hb_it++);
+        history.pop_front();
 
         ++stats.undoneMaps;
     }
@@ -1230,14 +1230,12 @@ Rename::removeFromHistory(InstSeqNum inst_seq_num, ThreadID tid)
             "history buffer %u (size=%i), until [sn:%llu].\n",
             tid, tid, historyBuffer[tid].size(), inst_seq_num);
 
-    auto hb_it = historyBuffer[tid].end();
+    auto &history = historyBuffer[tid];
 
-    --hb_it;
-
-    if (historyBuffer[tid].empty()) {
+    if (history.empty()) {
         DPRINTF(Rename, "[tid:%i] History buffer is empty.\n", tid);
         return;
-    } else if (hb_it->instSeqNum > inst_seq_num) {
+    } else if (history.back().instSeqNum > inst_seq_num) {
         DPRINTF(Rename, "[tid:%i] [sn:%llu] "
                 "Old sequence number encountered. "
                 "Ensure that a syscall happened recently.\n",
@@ -1249,26 +1247,25 @@ Rename::removeFromHistory(InstSeqNum inst_seq_num, ThreadID tid)
     // number. Some or even all of the committed instructions may not have
     // rename histories if they did not have destination registers that were
     // renamed.
-    while (!historyBuffer[tid].empty() &&
-           hb_it != historyBuffer[tid].end() &&
-           hb_it->instSeqNum <= inst_seq_num) {
+    while (!history.empty() && history.back().instSeqNum <= inst_seq_num) {
+        const RenameHistory &entry = history.back();
 
         DPRINTF(Rename, "[tid:%i] Freeing up older rename of reg %i (%s), "
                 "[sn:%llu].\n",
-                tid, hb_it->prevPhysReg->index(),
-                hb_it->prevPhysReg->className(),
-                hb_it->instSeqNum);
+                tid, entry.prevPhysReg->index(),
+                entry.prevPhysReg->className(),
+                entry.instSeqNum);
 
         // Don't free special phys regs like misc and zero regs, which
         // can be recognized because the new mapping is the same as
         // the old one.
-        if (hb_it->newPhysReg != hb_it->prevPhysReg) {
+        if (entry.newPhysReg != entry.prevPhysReg) {
             // Garfield MRN: release only when the last mapping is gone
             // (refcount 0). Non-aliased regs go 1->0, identical to the
             // unconditional free; an MRN-aliased producer survives until
             // every arch reg that mapped it has been superseded.
-            if (hb_it->prevPhysReg->decrRefCount() == 0) {
-                freeList->addReg(hb_it->prevPhysReg);
+            if (entry.prevPhysReg->decrRefCount() == 0) {
+                freeList->addReg(entry.prevPhysReg);
             }
         }
 
@@ -1276,23 +1273,23 @@ Rename::removeFromHistory(InstSeqNum inst_seq_num, ThreadID tid)
         // physreg at commit -- it is dead once the load has been verified, and
         // the map never pointed at it (so it is not freed by any other
         // commit).
-        if (hb_it->aliased && hb_it->aliasLoadReg) {
-            if (hb_it->aliasLoadReg->decrRefCount() == 0) {
-                freeList->addReg(hb_it->aliasLoadReg);
+        if (entry.aliased && entry.aliasLoadReg) {
+            if (entry.aliasLoadReg->decrRefCount() == 0) {
+                freeList->addReg(entry.aliasLoadReg);
             }
         }
 
-        if (hb_it->prevPhysReg->classValue()== FloatRegClass) {
+        if (entry.prevPhysReg->classValue()== FloatRegClass) {
            ++stats.fpReturned;
         }
-        if (hb_it->prevPhysReg->classValue()== IntRegClass) {
+        if (entry.prevPhysReg->classValue()== IntRegClass) {
            ++stats.intReturned;
         }
 
 
         ++stats.committedMaps;
 
-        historyBuffer[tid].erase(hb_it--);
+        history.pop_back();
     }
 }
 
@@ -1793,7 +1790,7 @@ Rename::incrFullStat(const FullSource &source)
 void
 Rename::dumpHistory()
 {
-    std::list<RenameHistory>::iterator buf_it;
+    std::deque<RenameHistory>::iterator buf_it;
 
     for (ThreadID tid = 0; tid < numThreads; tid++) {
 

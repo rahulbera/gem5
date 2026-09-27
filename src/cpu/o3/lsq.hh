@@ -390,8 +390,10 @@ class LSQ
 
         uint32_t taskId() const { return _taskId; }
 
-        RequestPtr req(int idx = 0) { return _reqs.at(idx); }
-        const RequestPtr req(int idx = 0) const { return _reqs.at(idx); }
+        // References rather than copies: a RequestPtr copy is an atomic
+        // reference-count increment and decrement, and these are called
+        // several times per memory access.
+        const RequestPtr &req(int idx = 0) const { return _reqs.at(idx); }
 
         Addr getVaddr(int idx = 0) const { return req(idx)->getVaddr(); }
         virtual void initiateTranslation() = 0;
@@ -405,7 +407,7 @@ class LSQ
             return packet();
         }
 
-        virtual RequestPtr
+        virtual const RequestPtr &
         mainReq()
         {
             assert (_reqs.size() == 1);
@@ -686,7 +688,7 @@ class LSQ
                 gem5::ThreadContext *thread, PacketPtr pkt);
         virtual bool isCacheBlockHit(Addr blockAddr, Addr cacheBlockMask);
 
-        virtual RequestPtr mainReq();
+        const RequestPtr &mainReq() override;
         virtual PacketPtr mainPacket();
         virtual std::string name() const { return "SplitDataRequest"; }
     };

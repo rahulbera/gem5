@@ -96,7 +96,7 @@ class ThreadContext;
 class CPU : public BaseCPU
 {
   public:
-    typedef std::list<DynInstPtr>::iterator ListIt;
+    typedef DynInstList::iterator ListIt;
 
     friend class ThreadContext;
 
@@ -401,7 +401,7 @@ class CPU : public BaseCPU
 #endif
 
     /** List of all the instructions in flight. */
-    std::list<DynInstPtr> instList;
+    DynInstList instList;
 
     /** List of all the instructions that will be removed at the end of this
      *  cycle.

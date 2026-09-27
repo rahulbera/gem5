@@ -41,6 +41,7 @@
 #ifndef __CPU_O3_DEP_GRAPH_HH__
 #define __CPU_O3_DEP_GRAPH_HH__
 
+#include "base/pooled_new.hh"
 #include "cpu/o3/comm.hh"
 
 namespace gem5
@@ -49,9 +50,10 @@ namespace gem5
 namespace o3
 {
 
-/** Node in a linked list. */
+/** Node in a linked list. Pooled: one is created and destroyed for
+ *  nearly every register dependence. */
 template <class DynInstPtr>
-class DependencyEntry
+class DependencyEntry : public PooledNew<DependencyEntry<DynInstPtr>>
 {
   public:
     DependencyEntry()

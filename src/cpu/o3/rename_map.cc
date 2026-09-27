@@ -117,11 +117,13 @@ UnifiedRenameMap::init(const BaseISA::RegClasses &regClasses,
 }
 
 bool
-UnifiedRenameMap::canRename(DynInstPtr inst) const
+UnifiedRenameMap::canRename(const DynInstPtr &inst) const
 {
     for (int i = 0; i < renameMaps.size(); i++) {
-        if (inst->numDestRegs((RegClassType)i) >
-                renameMaps[i].numFreeEntries()) {
+        // Classes the instruction writes no register of cannot block it,
+        // so skip asking their free lists for a count.
+        const auto num_dest = inst->numDestRegs((RegClassType)i);
+        if (num_dest && num_dest > renameMaps[i].numFreeEntries()) {
             return false;
         }
     }

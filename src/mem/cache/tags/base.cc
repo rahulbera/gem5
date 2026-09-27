@@ -81,6 +81,20 @@ BaseTags::findBlockBySetAndWay(int set, int way) const
 CacheBlk*
 BaseTags::findBlock(const CacheBlk::KeyType &key) const
 {
+    // Fast path: walk the set in place and compute the tag once. The
+    // blocks' tag extractor wraps this same indexing policy (see
+    // genTagExtractor), so the result is the same as below.
+    if (const auto *entries = indexingPolicy->possibleEntriesInPlace(key)) {
+        const Addr tag = indexingPolicy->extractTag(key.address);
+        for (const auto &location : *entries) {
+            CacheBlk* blk = static_cast<CacheBlk*>(location);
+            if (blk->matchTag(tag, key.secure)) {
+                return blk;
+            }
+        }
+        return nullptr;
+    }
+
     // Find possible entries that may contain the given address
     const std::vector<ReplaceableEntry*> entries =
         indexingPolicy->getPossibleEntries(key);

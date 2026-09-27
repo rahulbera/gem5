@@ -47,6 +47,7 @@
 #include <queue>
 #include <vector>
 
+#include "base/pooled_new.hh"
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
@@ -189,10 +190,10 @@ class InstructionQueue
 {
   public:
     // Typedef of iterator through the list of instructions.
-    typedef typename std::list<DynInstPtr>::iterator ListIt;
+    typedef typename DynInstList::iterator ListIt;
 
     /** FU completion event class. */
-    class FUCompletion : public Event
+    class FUCompletion : public Event, public PooledNew<FUCompletion>
     {
       private:
         /** Executing instruction. */
@@ -424,23 +425,23 @@ class InstructionQueue
     //////////////////////////////////////
 
     /** List of all the instructions in the IQ (some of which may be issued). */
-    std::list<DynInstPtr> instList[MaxThreads];
+    DynInstList instList[MaxThreads];
 
     /** List of instructions that are ready to be executed. */
-    std::list<DynInstPtr> instsToExecute;
+    DynInstList instsToExecute;
 
     /** List of instructions waiting for their DTB translation to
      *  complete (hw page table walk in progress).
      */
-    std::list<DynInstPtr> deferredMemInsts;
+    DynInstList deferredMemInsts;
 
     /** List of instructions that have been cache blocked. */
-    std::list<DynInstPtr> blockedMemInsts;
+    DynInstList blockedMemInsts;
 
     /** List of instructions that were cache blocked, but a retry has been seen
      * since, so they can now be retried. May fail again go on the blocked list.
      */
-    std::list<DynInstPtr> retryMemInsts;
+    DynInstList retryMemInsts;
 
     /**
      * Struct for comparing entries to be added to the priority queue.

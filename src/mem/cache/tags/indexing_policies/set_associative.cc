@@ -75,4 +75,10 @@ SetAssociative::getPossibleEntries(const Addr &addr) const
     return sets[extractSet(addr)];
 }
 
+const std::vector<ReplaceableEntry*> *
+SetAssociative::possibleEntriesInPlace(const Addr &addr) const
+{
+    return &sets[extractSet(addr)];
+}
+
 } // namespace gem5

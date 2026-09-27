@@ -1,0 +1,81 @@
+diff --git a/src/mem/cache/base.cc b/src/mem/cache/base.cc
+index f6563e176e..2aa321a814 100644
+--- a/src/mem/cache/base.cc
++++ b/src/mem/cache/base.cc
+@@ -498,7 +498,7 @@ BaseCache::recvTimingReq(PacketPtr pkt)
+     if (satisfied) {
+         // notify before anything else as later handleTimingReqHit might turn
+         // the packet in a response
+-        ppHit->notify(CacheAccessProbeArg(pkt,accessor));
++        ppHit->notify(CacheAccessProbeArg(pkt, accessor, blk));
+ 
+         if (prefetcher && blk && blk->wasPrefetched()) {
+             DPRINTF(Cache, "Hit on prefetch for addr %#x (%s)\n",
+diff --git a/src/mem/cache/cache_probe_arg.hh b/src/mem/cache/cache_probe_arg.hh
+index 7658a3a281..d299ebf9d1 100644
+--- a/src/mem/cache/cache_probe_arg.hh
++++ b/src/mem/cache/cache_probe_arg.hh
+@@ -44,6 +44,8 @@
+ namespace gem5
+ {
+ 
++class CacheBlk;
++
+ /**
+  * Provides generic cache lookup functions. A cache may provide
+  * a CacheAccessor object to other components that need to perform
+@@ -83,9 +85,16 @@ class CacheAccessProbeArg
+     PacketPtr pkt;
+     /** Accessor for the cache */
+     CacheAccessor &cache;
+-
+-    CacheAccessProbeArg(PacketPtr _pkt, CacheAccessor &_cache)
+-        :pkt(_pkt), cache(_cache)
++    /**
++     * The block the access found for pkt's address, when the notifier
++     * knows it (on a hit), else nullptr. Lets listeners skip repeating
++     * the tag lookup.
++     */
++    CacheBlk *blk;
++
++    CacheAccessProbeArg(PacketPtr _pkt, CacheAccessor &_cache,
++                        CacheBlk *_blk = nullptr)
++        :pkt(_pkt), cache(_cache), blk(_blk)
+     {
+     }
+ };
+diff --git a/src/mem/cache/prefetch/base.cc b/src/mem/cache/prefetch/base.cc
+index cc74e31ff2..ecc33c1600 100644
+--- a/src/mem/cache/prefetch/base.cc
++++ b/src/mem/cache/prefetch/base.cc
+@@ -48,6 +48,7 @@
+ #include <cassert>
+ 
+ #include "base/intmath.hh"
++#include "mem/cache/cache_blk.hh"
+ #include "params/BasePrefetcher.hh"
+ #include "sim/system.hh"
+ 
+@@ -243,9 +244,19 @@ Base::probeNotify(const CacheAccessProbeArg &acc, bool miss)
+         panic("Request must have a physical address");
+     }
+ 
+-    bool has_been_prefetched =
+-        acc.cache.hasBeenPrefetched(pkt->getAddr(), pkt->isSecure(),
+-                                    requestorId);
++    // The same answer as hasBeenPrefetched(), without repeating the tag
++    // lookup when the notifier passed the block it found: a set never
++    // holds two blocks with the same tag, so a matching hint is the
++    // block the lookup would return.
++    bool has_been_prefetched;
++    if (acc.blk && acc.blk->match({pkt->getAddr(), pkt->isSecure()})) {
++        has_been_prefetched = acc.blk->wasPrefetched() &&
++            acc.blk->getSrcRequestorId() == requestorId;
++    } else {
++        has_been_prefetched =
++            acc.cache.hasBeenPrefetched(pkt->getAddr(), pkt->isSecure(),
++                                        requestorId);
++    }
+     if (has_been_prefetched) {
+         usefulPrefetches += 1;
+         prefetchStats.pfUseful++;

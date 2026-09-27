@@ -40,6 +40,8 @@
 
 #include "cpu/pred/simple_btb.hh"
 
+#include <algorithm>
+
 #include "base/intmath.hh"
 #include "base/trace.hh"
 #include "debug/BTB.hh"
@@ -51,9 +53,17 @@ SimpleBTB::SimpleBTB(const SimpleBTBParams &p)
     : BranchTargetBuffer(p),
       btb("simpleBTB", p.numEntries, p.associativity,
           p.btbReplPolicy, p.btbIndexingPolicy,
-          BTBEntry(genTagExtractor(p.btbIndexingPolicy)))
+          BTBEntry(genTagExtractor(p.btbIndexingPolicy))),
+      setAssocIndexing(
+          dynamic_cast<const BTBSetAssociative *>(p.btbIndexingPolicy))
 {
     DPRINTF(BTB, "BTB: Creating BTB object.\n");
+
+    if (setAssocIndexing &&
+            setAssocIndexing->getTagMask() < (uint64_t(1) << 47)) {
+        mirrorAssoc = setAssocIndexing->getAssoc();
+        tagMirror.assign(p.numEntries, 0);
+    }
 
     if (!isPowerOf2(p.numEntries / p.associativity)) {
         fatal("BTB sets is not a power of 2!");
@@ -64,20 +74,50 @@ void
 SimpleBTB::memInvalidate()
 {
     btb.clear();
+    std::fill(tagMirror.begin(), tagMirror.end(), 0);
+}
+
+BTBEntry *
+SimpleBTB::probe(Addr instPC, ThreadID tid) const
+{
+    if (!setAssocIndexing)
+        return btb.findEntry({instPC, tid});
+
+    if (!tagMirror.empty()) {
+        // A slot equals the wanted key exactly when its entry is valid and
+        // holds this tag and thread, i.e. when matchTag() would be true.
+        const uint32_t set = setAssocIndexing->setIndex({instPC, tid});
+        const uint64_t want =
+            mirrorKey(setAssocIndexing->extractTag(instPC), tid);
+        const uint64_t *slot = &tagMirror[set * mirrorAssoc];
+        for (unsigned way = 0; way < mirrorAssoc; ++way) {
+            if (slot[way] == want) {
+                return static_cast<BTBEntry *>(
+                    setAssocIndexing->getEntry(set, way));
+            }
+        }
+        return nullptr;
+    }
+
+    const Addr tag = setAssocIndexing->extractTag(instPC);
+    for (auto *candidate : setAssocIndexing->possibleEntries({instPC, tid})) {
+        auto *entry = static_cast<BTBEntry *>(candidate);
+        if (entry->matchTag(tag, tid))
+            return entry;
+    }
+    return nullptr;
 }
 
 BTBEntry *
 SimpleBTB::findEntry(Addr instPC, ThreadID tid)
 {
-    return btb.findEntry({instPC, tid});
+    return probe(instPC, tid);
 }
 
 bool
 SimpleBTB::valid(ThreadID tid, Addr instPC)
 {
-    BTBEntry *entry = btb.findEntry({instPC, tid});
-
-    return entry != nullptr;
+    return probe(instPC, tid) != nullptr;
 }
 
 // @todo Create some sort of return struct that has both whether or not the
@@ -98,10 +138,27 @@ SimpleBTB::lookup(ThreadID tid, Addr instPC, BranchType type)
     return nullptr;
 }
 
+bool
+SimpleBTB::findFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                           Addr &addr, StaticInstPtr &inst)
+{
+    // Same addresses and result as the base class's valid()/getInst()
+    // loop, with one probe per address and no virtual call per step.
+    for (addr = start; ; addr += step) {
+        if (BTBEntry *entry = probe(addr, tid)) {
+            inst = entry->inst;
+            return true;
+        }
+        if (addr - start >= width) {
+            return false;
+        }
+    }
+}
+
 const StaticInstPtr
 SimpleBTB::getInst(ThreadID tid, Addr instPC)
 {
-    BTBEntry *entry = btb.findEntry({instPC, tid});
+    BTBEntry *entry = probe(instPC, tid);
 
     if (entry) {
         return entry->inst;
@@ -121,6 +178,12 @@ SimpleBTB::update(ThreadID tid, Addr instPC,
 
     btb.insertEntry({instPC, tid}, victim);
     victim->update(target, inst);
+
+    if (!tagMirror.empty()) {
+        const auto key = victim->getTag();
+        tagMirror[victim->getSet() * mirrorAssoc + victim->getWay()] =
+            mirrorKey(key.address, key.tid);
+    }
 }
 
 

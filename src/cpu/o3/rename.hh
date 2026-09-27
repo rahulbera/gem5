@@ -42,6 +42,7 @@
 #ifndef __CPU_O3_RENAME_HH__
 #define __CPU_O3_RENAME_HH__
 
+#include <deque>
 #include <list>
 #include <utility>
 
@@ -350,9 +351,11 @@ class Rename
     };
 
     /** A per-thread list of all destination register renames, used to either
-     * undo rename mappings or free old physical registers.
+     * undo rename mappings or free old physical registers. The youngest
+     * rename is at the front; entries only ever leave from either end.
+     * A deque rather than a list, so that a rename does not allocate.
      */
-    std::list<RenameHistory> historyBuffer[MaxThreads];
+    std::deque<RenameHistory> historyBuffer[MaxThreads];
 
     /** Pointer to CPU. */
     CPU *cpu;

@@ -102,12 +102,37 @@ class BTBSetAssociative : public BTBIndexingPolicy
     std::vector<ReplaceableEntry*>
     getPossibleEntries(const KeyType &key) const override
     {
+        return possibleEntries(key);
+    }
+
+    const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const KeyType &key) const override
+    {
+        return &possibleEntries(key);
+    }
+
+    /**
+     * The same entries as getPossibleEntries(), in the same order, without
+     * copying them.
+     */
+    const std::vector<ReplaceableEntry*> &
+    possibleEntries(const KeyType &key) const
+    {
         auto set_idx = extractSet(key);
 
         assert(set_idx < sets.size());
 
         return sets[set_idx];
     }
+
+    /** The set an address maps to (the index of possibleEntries()). */
+    uint32_t setIndex(const KeyType &key) const { return extractSet(key); }
+
+    /** The number of ways per set. */
+    unsigned getAssoc() const { return assoc; }
+
+    /** The mask applied to tags; its width is the tag_bits parameter. */
+    uint64_t getTagMask() const { return tagMask; }
 
     /**
      * Set number of threads sharing the BTB
@@ -173,6 +198,16 @@ class BTBEntry : public ReplaceableEntry
     {
         return isValid() && (tag.address == extractTag(key.address))
             && (tag.tid == key.tid);
+    }
+
+    /**
+     * Same as match(), for a tag already computed from the address by the
+     * indexing policy's extractTag().
+     */
+    bool
+    matchTag(Addr tag_address, ThreadID tid) const
+    {
+        return isValid() && (tag.address == tag_address) && (tag.tid == tid);
     }
 
     /**

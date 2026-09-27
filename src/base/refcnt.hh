@@ -165,12 +165,23 @@ class RefCountingPtr
      * @attention this doesn't clear the pointer value, so a double
      * decref could happen if not careful.
      */
-    GEM5_NO_INLINE void
+    void
     del()
     {
-        if (data && data->decref()) {
-            delete data;
-        }
+        if (data && data->decref())
+            destroy(data);
+    }
+
+    /**
+     * Delete an object whose last reference is gone. Only the delete is
+     * kept out of line: inlined next to decref(), it makes GCC report a
+     * false -Wuse-after-free (#2686). The null test and the decrement in
+     * del() run on every release, so they stay inline.
+     */
+    GEM5_NO_INLINE static void
+    destroy(T *d)
+    {
+        delete d;
     }
 
     /**

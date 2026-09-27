@@ -1,0 +1,30 @@
+diff --git a/src/cpu/o3/limits.hh b/src/cpu/o3/limits.hh
+index ce7a806ccb..dc2fd8676b 100644
+--- a/src/cpu/o3/limits.hh
++++ b/src/cpu/o3/limits.hh
+@@ -46,8 +46,23 @@ namespace gem5
+ namespace o3
+ {
+ 
+-static constexpr int MaxWidth = 16;
+-static constexpr int MaxThreads = 4;
++/**
++ * Upper bounds on the O3 pipeline width and thread count. They size the
++ * inter-stage buffers that the CPU destroys and clears every cycle, so
++ * a build for configurations that need less can lower them and make
++ * every simulated cycle cheaper, e.g. with
++ *   CCFLAGS_EXTRA='-DGEM5_O3_MAX_WIDTH=8 -DGEM5_O3_MAX_THREADS=1'
++ * Such a binary refuses (fatal) any configuration exceeding the bounds.
++ */
++#ifndef GEM5_O3_MAX_WIDTH
++#define GEM5_O3_MAX_WIDTH 16
++#endif
++#ifndef GEM5_O3_MAX_THREADS
++#define GEM5_O3_MAX_THREADS 4
++#endif
++
++static constexpr int MaxWidth = GEM5_O3_MAX_WIDTH;
++static constexpr int MaxThreads = GEM5_O3_MAX_THREADS;
+ 
+ } // namespace o3
+ } // namespace gem5

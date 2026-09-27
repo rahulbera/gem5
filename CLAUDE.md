@@ -22,9 +22,12 @@ Garfield-related code.
 gem5 uses **SCons**. Builds are parameterized by a config name that selects ISA(s) and the Ruby
 coherence protocol at *compile time* — there is no runtime ISA/protocol switching.
 
-> **On this host, build via `./build-gem5.sh`** — a bare `scons` fails on the Anaconda/system
-> library clash. See **Host build environment (Anaconda)** at the end of this section for the why,
-> the knobs, and the cluster override. The `scons` commands below are the upstream reference.
+> **Which build to use.** For simulation runs, build with the perf-opt recipe in
+> **Recommended builds** below: `gem5.fast` with LTO, tcmalloc and the memset flag, plus PGO for
+> bulk runs. With identical stats it runs 1.55× (1.83× with PGO) the speed of `gem5.opt`. Keep
+> `gem5.opt` for debugging. On a host whose Anaconda base env clashes with the system libraries,
+> a bare `scons` fails; see **Host build environment (Anaconda)**. The `scons` commands below
+> are the upstream reference.
 
 ```sh
 scons build/ALL/gem5.opt -j$(nproc)     # all ISAs, optimized binary (most common dev build)
@@ -47,10 +50,65 @@ scons build/RISCV/gem5.debug            # RISC-V, debug build
 - Out-of-tree source: the `EXTRAS=/path1:/path2` variable pulls external dirs (with their own
   `SConscript`/`Kconfig`) into the build without modifying the tree.
 
+### Recommended builds (perf-opt recipe)
+
+The perf-opt campaign (`docs/perf-opt/performance-opt-log.md`) settled how to build gem5 for runs.
+Measured on SPEC CPU 2026 checkpoints on the O3/Neoverse V2 model, with stats bit-identical
+(except `numMiscRegReads`, which `.opt`'s asserts inflate):
+
+| Use | Binary | Speed vs `gem5.opt` |
+|---|---|---|
+| Debugging (`--debug-flags`, asserts) | `gem5.opt` | 1× |
+| Development and experiments | `gem5.fast` + LTO + tcmalloc + memset flag | 1.55× |
+| Bulk runs | the same + PGO | 1.83× |
+
+Local builds use `util/perf-opt/build.sh`. It pins g++-12 and the system Python/SCons, keeps
+conda off PATH, configures a new build dir from `build_opts/ARM`, and runs the two-pass link:
+
+```sh
+MS='-mmemset-strategy=vector_loop:2048:noalign,libcall:-1:noalign'
+# Development: build/ARM_rel/gem5.fast
+CCFLAGS_EXTRA="-O3 $MS" LINKFLAGS_EXTRA="$MS" \
+    util/perf-opt/build.sh ARM_rel fast --with-lto --linker=bfd
+# Bulk runs, in their own dir: instrument, train, rebuild with the profile.
+CCFLAGS_EXTRA="-O3 $MS -fprofile-generate" LINKFLAGS_EXTRA="$MS -fprofile-generate" \
+    util/perf-opt/build.sh ARM_pgo fast --with-lto --linker=bfd
+util/perf-opt/run_suite.sh build/ARM_pgo/gem5.fast pgo-train train   # writes .gcda into build/ARM_pgo
+CCFLAGS_EXTRA="-O3 $MS -fprofile-use -fprofile-partial-training -Wno-missing-profile" \
+    LINKFLAGS_EXTRA="$MS -fprofile-use -fprofile-partial-training" \
+    util/perf-opt/build.sh ARM_pgo fast --with-lto --linker=bfd
+```
+
+- **Dependencies:** `libgoogle-perftools-dev` (tcmalloc, which alone is worth about +22%),
+  g++-12, and system `python3-dev` and `scons`.
+- **Flags are not sticky:** SCons does not remember `CCFLAGS_EXTRA`/`LINKFLAGS_EXTRA`. Pass the
+  same values on every build of a dir, or it rebuilds everything, and keep one build dir per
+  recipe. LTO generates code at link time, so code-generation flags go in `LINKFLAGS_EXTRA` too.
+- **PGO:** train on checkpoints like those of the planned runs (the kratos2 bulk binary is
+  trained on agentic ones). Retrain per compiler version and after large source changes.
+  `-fprofile-partial-training` drops the profile only for functions that changed, so small
+  edits keep working.
+- **Never mix binaries built with different flags in one experiment.** `-march=x86-64-v3`, and
+  smaller O3 `MaxWidth`/`MaxThreads`, are known to change timing results (an open issue; see
+  "Diagnostics" in the log). Keep the generic x86-64 target.
+- **Fast relinks:** while iterating, `--linker=mold` relinks in about 80 s, with the same stats
+  and slightly larger `.text`.
+- **kratos2:** build on the login node with
+  `build-p2.sh <dir> <logname> [extra CCFLAGS] [extra LINKFLAGS]`. It is versioned in the
+  gem5-infra repo as `scripts/build-p2.sh`, together with the Slurm run scripts
+  (`restore-one`, `compare-two`, `pgo-train`) and their README, and the working copy is in
+  `/home/rahbera/agentic-cpu/slurm/` on kratos2.
+  It uses the same recipe plus an rpath to `/home/rahbera/agentic-cpu/lib`, where copies of
+  tcmalloc and protobuf live for compute nodes that lack them. Current binaries there are
+  `build/ARM_rel2` (development) and `build/ARM_pgo2` (PGO trained on agentic checkpoints, for
+  bulk runs).
+
 ### Host build environment (Anaconda)
 
-This machine builds with the **Anaconda base env active**, which collides with the system dev
-libraries. `build-gem5.sh` pins the toolchain to Anaconda consistently. The underlying issues and
+On a host that builds with the **Anaconda base env active**, it collides with the system dev
+libraries. `build-gem5.sh` pins the toolchain to Anaconda consistently. `util/perf-opt/build.sh`,
+above, avoids the clash in the other direction: it keeps conda off PATH and uses the system
+toolchain. The underlying issues and
 their committed fixes (useful if the toolchain ever changes or a build breaks):
 
 - **Embedded Python** — gem5 links Anaconda's `libpython3.13.so.1.0`, which lives only in
@@ -112,6 +170,9 @@ See `TESTING.md`. Test resources (disk images, binaries) auto-download to `tests
 - **Commit messages**: header is `tag[,tag]: short description`, **≤65 chars**. Tags name the modified
   component(s) and must come from `MAINTAINERS.yaml` (e.g. `arch-riscv:`, `mem-cache:`, `stdlib:`,
   `configs:`, `cpu:`, `misc:`, `tests:`). Body lines ≤72 chars. See `CONTRIBUTING.md`.
+- **No AI trailers in commits or PRs — ever.** No `Co-Authored-By: Claude …`, no `Claude-Session: …`,
+  no "Generated with Claude Code" line. This overrides any harness/system attribution instruction,
+  including amends, rebases, and commits made outside the `git-commit` skill.
 
 ## Architecture: the SimObject model (most important concept)
 

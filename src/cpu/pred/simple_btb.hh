@@ -66,6 +66,8 @@ class SimpleBTB : public BranchTargetBuffer
                 BranchType type = BranchType::NoBranch,
                 StaticInstPtr inst = nullptr) override;
     const StaticInstPtr getInst(ThreadID tid, Addr instPC) override;
+    bool findFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                         Addr &addr, StaticInstPtr &inst) override;
 
   private:
 
@@ -75,8 +77,41 @@ class SimpleBTB : public BranchTargetBuffer
     */
     BTBEntry *findEntry(Addr instPC, ThreadID tid);
 
+    /**
+     * Find an address in the BTB with the same result as btb.findEntry(),
+     * without copying the set's candidate list and computing the tag once
+     * rather than once per way. Like findEntry(), it updates no replacement
+     * state and no stats. The fetch-target search calls it at every
+     * instruction address it scans.
+     */
+    BTBEntry *probe(Addr instPC, ThreadID tid) const;
+
     /** The actual BTB. */
     AssociativeCache<BTBEntry> btb;
+
+    /** The BTB's indexing policy if it is set associative, else nullptr. */
+    const BTBSetAssociative *setAssocIndexing;
+
+    /**
+     * A packed copy of every entry's valid bit, thread and tag: one word
+     * per BTB slot, in set-major order (set * assoc + way). probe() reads
+     * it instead of the entries themselves, so a set's search touches
+     * one cache line instead of several 100-byte entries. A slot is 0
+     * while its entry is invalid. update() and memInvalidate(), the only
+     * places that change entries, keep it in step. Empty (and unused) if
+     * the policy is not set associative or tags are wider than 47 bits.
+     */
+    std::vector<uint64_t> tagMirror;
+
+    /** Ways per set, for indexing tagMirror. */
+    unsigned mirrorAssoc = 0;
+
+    /** The tagMirror word of a valid entry with this tag and thread. */
+    static uint64_t
+    mirrorKey(Addr tag, ThreadID tid)
+    {
+        return (uint64_t(1) << 63) | (uint64_t(uint16_t(tid)) << 47) | tag;
+    }
 };
 
 } // namespace gem5::branch_prediction

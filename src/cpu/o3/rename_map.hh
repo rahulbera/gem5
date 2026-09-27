@@ -293,7 +293,7 @@ class UnifiedRenameMap
     /**
      * Return whether there are enough registers to serve the request.
      */
-    bool canRename(DynInstPtr inst) const;
+    bool canRename(const DynInstPtr &inst) const;
 };
 
 } // namespace o3

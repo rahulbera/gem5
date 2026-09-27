@@ -44,6 +44,7 @@
 
 #include <deque>
 
+#include "base/pooled_new.hh"
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
@@ -169,6 +170,18 @@ class BPredUnit : public SimObject
     }
 
     /**
+     * Find the first branch in the BTB among the addresses start,
+     * start + step, ..., up to the first one at least width bytes past
+     * start. See BranchTargetBuffer::findFirstBranch().
+     */
+    bool
+    BTBFindFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                       Addr &addr, StaticInstPtr &inst)
+    {
+        return btb->findFirstBranch(tid, start, width, step, addr, inst);
+    }
+
+    /**
      * Updates the BTB with the target of a branch.
      * @param tid The thread id.
      * @param pc The branch's PC that will be updated.
@@ -269,7 +282,7 @@ class BPredUnit : public SimObject
      *         +-------------------------------------+
      *
      */
-    struct PredictorHistory
+    struct PredictorHistory : public PooledNew<PredictorHistory>
     {
         /**
          * Makes a predictor history struct that contains any

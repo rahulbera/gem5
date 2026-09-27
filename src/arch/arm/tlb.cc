@@ -78,12 +78,26 @@ TLB::Table::findEntry(const KeyType &key) const
         return prev;
     }
 
-    for (auto candidate : indexingPolicy->getPossibleEntries(key)) {
-        auto entry = static_cast<TlbEntry*>(candidate);
+    auto matches = [&key](const TlbEntry *entry) {
         // We check for pageSize match outside of the Entry::match
         // as the latter is also used to match entries in TLBI invalidation
         // where we don't care about the pageSize
-        if (entry->N == key.pageSize && entry->match(key)) {
+        return entry->N == key.pageSize && entry->match(key);
+    };
+
+    if (const auto *in_place = indexingPolicy->possibleEntriesInPlace(key)) {
+        for (auto candidate : *in_place) {
+            auto entry = static_cast<TlbEntry*>(candidate);
+            if (matches(entry)) {
+                return prev = entry;
+            }
+        }
+        return nullptr;
+    }
+
+    for (auto candidate : indexingPolicy->getPossibleEntries(key)) {
+        auto entry = static_cast<TlbEntry*>(candidate);
+        if (matches(entry)) {
             return prev = entry;
         }
     }

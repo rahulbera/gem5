@@ -195,6 +195,22 @@ class IndexingPolicyTemplate : public SimObject
                                                                     const = 0;
 
     /**
+     * The entries getPossibleEntries() returns, in the same order, without
+     * copying them. Policies that keep each set's entries in a vector
+     * return that vector; the default nullptr means the caller must use
+     * getPossibleEntries(). Lookups run on every access of a cache, TLB or
+     * predictor table, and the copy costs a heap allocation each time.
+     *
+     * @param key The key to find possible entries for.
+     * @return The possible entries, or nullptr.
+     */
+    virtual const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const KeyType &key) const
+    {
+        return nullptr;
+    }
+
+    /**
      * Regenerate an entry's address from its tag and assigned indexing bits.
      *
      * @param tag The tag bits.

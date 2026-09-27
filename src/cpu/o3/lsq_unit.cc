@@ -1676,6 +1676,17 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
     // Check the SQ for any previous stores that might lead to forwarding
     auto store_it = load_inst->sqIt;
     assert (store_it >= storeWBIt);
+    // The load's address range and LLSC flag do not change during the
+    // scan, so read them once, and only if there is anything to scan.
+    Addr req_s = 0;
+    Addr req_e = 0;
+    bool req_is_llsc = false;
+    if (store_it != storeWBIt && !load_inst->isDataPrefetch()) {
+        const RequestPtr &main_req = request->mainReq();
+        req_s = main_req->getVaddr();
+        req_e = req_s + main_req->getSize();
+        req_is_llsc = main_req->isLLSC();
+    }
     // End once we've reached the top of the LSQ
     while (store_it != storeWBIt && !load_inst->isDataPrefetch()) {
         // Move the index to one younger
@@ -1694,8 +1705,6 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
 
             // Check if the store data is within the lower and upper bounds of
             // addresses that the request needs.
-            auto req_s = request->mainReq()->getVaddr();
-            auto req_e = req_s + request->mainReq()->getSize();
             auto st_s = store_it->instruction()->effAddr;
             auto st_e = st_s + store_size;
 
@@ -1712,7 +1721,7 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
             // we can forward data from the store to the load
             if (!store_it->instruction()->isAtomic() &&
                 store_has_lower_limit && store_has_upper_limit &&
-                !request->mainReq()->isLLSC()) {
+                !req_is_llsc) {
 
                 const auto& store_req = store_it->request()->mainReq();
                 coverage = store_req->isMasked() ?
@@ -1721,13 +1730,13 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
             } else if (
                 // This is the partial store-load forwarding case where a store
                 // has only part of the load's data and the load isn't LLSC
-                (!request->mainReq()->isLLSC() &&
+                (!req_is_llsc &&
                  ((store_has_lower_limit && lower_load_has_store_part) ||
                   (store_has_upper_limit && upper_load_has_store_part) ||
                   (lower_load_has_store_part && upper_load_has_store_part))) ||
                 // The load is LLSC, and the store has all or part of the
                 // load's data
-                (request->mainReq()->isLLSC() &&
+                (req_is_llsc &&
                  ((store_has_lower_limit || upper_load_has_store_part) &&
                   (store_has_upper_limit || lower_load_has_store_part))) ||
                 // The store entry is atomic and has all or part of the load's

@@ -1,0 +1,7 @@
+# Stats that differ between two identical baseline runs of the perf-opt suite,
+# one name per line (first token) with an optional reason. stats_gate.py and
+# kips_table.py skip these names when checking bit-identity.
+#
+# Baseline runs baseline-a and baseline-b (build/ARM/gem5.opt, 2026-09-26)
+# were identical on every stat of all five test checkpoints, so nothing is
+# excluded.

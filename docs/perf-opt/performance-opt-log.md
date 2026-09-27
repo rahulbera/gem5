@@ -1055,3 +1055,45 @@ paired Trial 8b run.
   estimate or the effect is simply unmeasurable with five single runs.
 - **The code changes are sound** and make the scheduler easier to follow. They could
   be revisited together with other IQ work, where the combined effect would be larger.
+
+### Trial 10 — allocation-free BTB search in the decoupled front end
+
+**Summary:** the fetch-target search probes the BTB at every 4-byte address it scans.
+Each probe copied the set's candidate vector and called a `std::function` per way to
+compute the tag. A new `SimpleBTB::probe()` walks the set in place and computes the tag
+once. All five checkpoints are faster (+1.4% to +6.7%) with stats bit-identical.
+**Accepted.**
+
+**Key idea:** `BAC::generateFetchTargets` calls `BPredUnit::BTBValid` at each
+`minInstSize` step until it finds a branch or reaches the fetch-target width, then
+`BTBGetInst` for the branch it found. Both went to `AssociativeCache::findEntry`, which
+copies `getPossibleEntries()` (a `std::vector` returned by value) and calls
+`BTBEntry::match()` per way; `match()` calls the entry's `std::function` tag extractor.
+The deep dive counted 106.9M steps on llvm against 32.5M on stockfish, and put 79% of
+`generateFetchTargets` self time in this search.
+- **Why the result cannot change:** `probe()` visits the same set's entries in the same
+  way order and returns the first match. It computes the tag with the same indexing
+  policy that every entry's extractor wraps (`genTagExtractor`). Like `findEntry()`, it
+  touches no replacement state and no stats. `lookup()` (which does touch and count) is
+  unchanged. A BTB whose indexing policy is not `BTBSetAssociative` falls back to
+  `findEntry()`.
+
+**Files targeted:** `src/cpu/pred/btb_entry.hh` (`BTBSetAssociative::possibleEntries()`
+returns the set by reference; `BTBEntry::matchTag()`), `src/cpu/pred/simple_btb.{hh,cc}`
+(`probe()`, used by `valid()`, `getInst()` and `findEntry()`). Built in 74 s.
+
+| Checkpoint | Paired reference KIPS (T8b) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 751.8 | 780.3 | +3.80% | faster | +10.38% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 800.1 | 811.2 | +1.38% | faster (within noise) | +7.31% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 541.2 | 559.9 | +3.45% | faster | +10.15% | 1.92% | yes |
+| 723.llvm_r.1.0 | 396.0 | 422.7 | +6.73% | faster | +10.23% | 0.02% | yes |
+| 753.ns3_r.2.0 | 446.9 | 454.4 | +1.68% | faster (within noise) | +8.51% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference too), and all
+five are faster, by +1.38% to +6.73%.
+- **Matches the profile:** llvm, the checkpoint with 3.3× more search steps and the
+  most mispredictions, gains the most (+6.7%). The deep dive estimated 1.5–2.3% for llvm,
+  so the real cost of the vector copy and per-way `std::function` calls was higher than
+  modeled.
+- **Binary:** `build/ARM_p2/gem5.fast.t10`, the reference for Trial 11.

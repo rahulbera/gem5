@@ -75,8 +75,20 @@ class SimpleBTB : public BranchTargetBuffer
     */
     BTBEntry *findEntry(Addr instPC, ThreadID tid);
 
+    /**
+     * Find an address in the BTB with the same result as btb.findEntry(),
+     * without copying the set's candidate list and computing the tag once
+     * rather than once per way. Like findEntry(), it updates no replacement
+     * state and no stats. The fetch-target search calls it at every
+     * instruction address it scans.
+     */
+    BTBEntry *probe(Addr instPC, ThreadID tid) const;
+
     /** The actual BTB. */
     AssociativeCache<BTBEntry> btb;
+
+    /** The BTB's indexing policy if it is set associative, else nullptr. */
+    const BTBSetAssociative *setAssocIndexing;
 };
 
 } // namespace gem5::branch_prediction

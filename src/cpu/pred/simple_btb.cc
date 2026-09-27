@@ -51,7 +51,9 @@ SimpleBTB::SimpleBTB(const SimpleBTBParams &p)
     : BranchTargetBuffer(p),
       btb("simpleBTB", p.numEntries, p.associativity,
           p.btbReplPolicy, p.btbIndexingPolicy,
-          BTBEntry(genTagExtractor(p.btbIndexingPolicy)))
+          BTBEntry(genTagExtractor(p.btbIndexingPolicy))),
+      setAssocIndexing(
+          dynamic_cast<const BTBSetAssociative *>(p.btbIndexingPolicy))
 {
     DPRINTF(BTB, "BTB: Creating BTB object.\n");
 
@@ -67,17 +69,30 @@ SimpleBTB::memInvalidate()
 }
 
 BTBEntry *
+SimpleBTB::probe(Addr instPC, ThreadID tid) const
+{
+    if (!setAssocIndexing)
+        return btb.findEntry({instPC, tid});
+
+    const Addr tag = setAssocIndexing->extractTag(instPC);
+    for (auto *candidate : setAssocIndexing->possibleEntries({instPC, tid})) {
+        auto *entry = static_cast<BTBEntry *>(candidate);
+        if (entry->matchTag(tag, tid))
+            return entry;
+    }
+    return nullptr;
+}
+
+BTBEntry *
 SimpleBTB::findEntry(Addr instPC, ThreadID tid)
 {
-    return btb.findEntry({instPC, tid});
+    return probe(instPC, tid);
 }
 
 bool
 SimpleBTB::valid(ThreadID tid, Addr instPC)
 {
-    BTBEntry *entry = btb.findEntry({instPC, tid});
-
-    return entry != nullptr;
+    return probe(instPC, tid) != nullptr;
 }
 
 // @todo Create some sort of return struct that has both whether or not the
@@ -101,7 +116,7 @@ SimpleBTB::lookup(ThreadID tid, Addr instPC, BranchType type)
 const StaticInstPtr
 SimpleBTB::getInst(ThreadID tid, Addr instPC)
 {
-    BTBEntry *entry = btb.findEntry({instPC, tid});
+    BTBEntry *entry = probe(instPC, tid);
 
     if (entry) {
         return entry->inst;

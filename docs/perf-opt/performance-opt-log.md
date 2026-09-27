@@ -965,3 +965,49 @@ Patch: `docs/perf-opt/patches/t08-timebuf-chunked-zero.patch`.
   expansion strategy instead.
 - **Drift:** the T7 binary's paired reference run here measured 2–3% above its own run
   in Trial 7, which again shows why each trial reruns its reference.
+
+### Trial 8b — expand small memsets as vector-store loops (build flag)
+
+**Summary:** telling GCC to expand fixed-size memsets of up to 2 KB as plain vector-store
+loops, instead of `rep stosq`, removes every `rep stosq` from `CPU::tick` and 99% of them
+from the binary. It speeds up 4 of 5 checkpoints (−1.75% to +4.11%) with stats
+bit-identical. **Accepted.** From here on, the flag is part of the evaluation recipe.
+
+**Key idea:** Trial 8 showed that GCC re-derives memsets from zeroing code, so the
+expansion strategy itself has to change. `-mmemset-strategy=vector_loop:2048:noalign,
+libcall:-1:noalign` makes every fixed-size memset up to 2048 bytes a loop of SSE stores
+with no alignment prologue, and anything larger a call to glibc's `memset`. The flag
+changes only how memsets are emitted, never what they write, so it cannot change
+results. It covers the time-buffer reset, the placement-new constructors that follow it,
+and every other small memset in gem5 (packets, requests, zero-initialized structs).
+
+**Files and flags targeted:** no source change. `CCFLAGS_EXTRA` and `LINKFLAGS_EXTRA`
+both get the flag, because LTO generates code at link time. Trial 8's source change
+was not kept.
+
+```
+MS='-mmemset-strategy=vector_loop:2048:noalign,libcall:-1:noalign'
+CCFLAGS_EXTRA="-O3 $MS" LINKFLAGS_EXTRA="$MS" util/perf-opt/build.sh ARM_p2 fast --with-lto --linker=bfd
+```
+
+- **Build:** 260 s (full rebuild, since the flags changed). `.text` grew by 96 KB to
+  30.02 MB.
+- **`rep stosq`:** 0 in `CPU::tick` (10 before), and 36 in the whole binary (3323 in the
+  Trial 7 binary).
+
+| Checkpoint | Paired reference KIPS (T7) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 731.2 | 748.5 | +2.38% | faster | +5.88% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 791.7 | 777.8 | −1.75% | slower (within noise) | +2.89% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 518.6 | 537.9 | +3.74% | faster | +5.84% | 1.92% | yes |
+| 723.llvm_r.1.0 | 385.0 | 400.8 | +4.11% | faster | +4.52% | 0.02% | yes |
+| 753.ns3_r.2.0 | 441.1 | 443.2 | +0.49% | faster (within noise) | +5.83% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference run too), and
+4/5 are faster than the paired Trial 7 run.
+- **Caveat:** two of the gains (+0.49% and the −1.75% loss) are inside the noise. The
+  clear gains are on llvm and sqlite, the two checkpoints with the most
+  memory-system activity per instruction.
+- **For the kratos2 recipe:** add the same flag to `CCFLAGS_EXTRA` and `LINKFLAGS_EXTRA`.
+  It is a generic x86-64 code-generation option, not tied to the host CPU.
+- **Binary:** `build/ARM_p2/gem5.fast.t8b`, the reference for the next trial.

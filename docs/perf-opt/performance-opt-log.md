@@ -1265,3 +1265,35 @@ five are faster than the paired Trial 13 run, by +0.67% to +5.49%.
   reference-count traffic was not in its allocator model, which counted only
   allocations and frees.
 - **Binary:** `build/ARM_p2/gem5.fast.t14`, the reference for Trial 15.
+
+### Trial 15 — reuse the hit block in the prefetcher's probe
+
+**Summary:** on a cache hit, the prefetcher's `probeNotify` repeated the tag lookup that
+`access()` had just done, to ask whether the block was prefetched. Passing the found
+block along with the probe removes that lookup. Stats are bit-identical, but only 1 of 5
+checkpoints got faster. **Rejected.**
+
+**Key idea:** `CacheAccessProbeArg` gains an optional `CacheBlk *blk`, which
+`BaseCache::recvTimingReq` sets on the `ppHit` notification. `prefetch::Base::probeNotify`
+checks it with `blk->match()` and, if it matches, answers `hasBeenPrefetched` from it
+directly. A set never holds two blocks with the same tag, so the result is the one the
+lookup would return. `ppHit` fires before the block's prefetched flag is cleared, as
+before. Misses and fills keep the full lookup.
+
+**Files targeted:** `src/mem/cache/{cache_probe_arg.hh,base.cc}`,
+`src/mem/cache/prefetch/base.cc`. Patch: `docs/perf-opt/patches/t15-probe-hint.patch`.
+Built in 80 s.
+
+| Checkpoint | Paired reference KIPS (T14) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 784.3 | 776.4 | −1.01% | slower | +9.82% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 821.3 | 814.7 | −0.80% | slower (within noise) | +7.78% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 555.9 | 567.5 | +2.08% | faster | +11.65% | 1.92% | yes |
+| 723.llvm_r.1.0 | 427.0 | 417.2 | −2.29% | slower | +8.81% | 0.02% | yes |
+| 753.ns3_r.2.0 | 465.2 | 457.0 | −1.76% | slower (within noise) | +9.12% | 2.21% | yes |
+
+**Verdict: rejected.** Stats are bit-identical on 5/5, but only 1/5 is faster than the
+paired Trial 14 run.
+- **Why:** after Trial 13, a tag lookup no longer copies the set and computes its tag
+  once, so the saved lookup is cheap. The deep dive expected this, putting the gain at
+  0.3–0.5% after Trial 13 (from 0.9–1.3% before it).

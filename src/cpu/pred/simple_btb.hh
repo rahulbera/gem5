@@ -91,6 +91,27 @@ class SimpleBTB : public BranchTargetBuffer
 
     /** The BTB's indexing policy if it is set associative, else nullptr. */
     const BTBSetAssociative *setAssocIndexing;
+
+    /**
+     * A packed copy of every entry's valid bit, thread and tag: one word
+     * per BTB slot, in set-major order (set * assoc + way). probe() reads
+     * it instead of the entries themselves, so a set's search touches
+     * one cache line instead of several 100-byte entries. A slot is 0
+     * while its entry is invalid. update() and memInvalidate(), the only
+     * places that change entries, keep it in step. Empty (and unused) if
+     * the policy is not set associative or tags are wider than 47 bits.
+     */
+    std::vector<uint64_t> tagMirror;
+
+    /** Ways per set, for indexing tagMirror. */
+    unsigned mirrorAssoc = 0;
+
+    /** The tagMirror word of a valid entry with this tag and thread. */
+    static uint64_t
+    mirrorKey(Addr tag, ThreadID tid)
+    {
+        return (uint64_t(1) << 63) | (uint64_t(uint16_t(tid)) << 47) | tag;
+    }
 };
 
 } // namespace gem5::branch_prediction

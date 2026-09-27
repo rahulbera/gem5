@@ -40,6 +40,8 @@
 
 #include "cpu/pred/simple_btb.hh"
 
+#include <algorithm>
+
 #include "base/intmath.hh"
 #include "base/trace.hh"
 #include "debug/BTB.hh"
@@ -57,6 +59,12 @@ SimpleBTB::SimpleBTB(const SimpleBTBParams &p)
 {
     DPRINTF(BTB, "BTB: Creating BTB object.\n");
 
+    if (setAssocIndexing &&
+            setAssocIndexing->getTagMask() < (uint64_t(1) << 47)) {
+        mirrorAssoc = setAssocIndexing->getAssoc();
+        tagMirror.assign(p.numEntries, 0);
+    }
+
     if (!isPowerOf2(p.numEntries / p.associativity)) {
         fatal("BTB sets is not a power of 2!");
     }
@@ -66,6 +74,7 @@ void
 SimpleBTB::memInvalidate()
 {
     btb.clear();
+    std::fill(tagMirror.begin(), tagMirror.end(), 0);
 }
 
 BTBEntry *
@@ -73,6 +82,22 @@ SimpleBTB::probe(Addr instPC, ThreadID tid) const
 {
     if (!setAssocIndexing)
         return btb.findEntry({instPC, tid});
+
+    if (!tagMirror.empty()) {
+        // A slot equals the wanted key exactly when its entry is valid and
+        // holds this tag and thread, i.e. when matchTag() would be true.
+        const uint32_t set = setAssocIndexing->setIndex({instPC, tid});
+        const uint64_t want =
+            mirrorKey(setAssocIndexing->extractTag(instPC), tid);
+        const uint64_t *slot = &tagMirror[set * mirrorAssoc];
+        for (unsigned way = 0; way < mirrorAssoc; ++way) {
+            if (slot[way] == want) {
+                return static_cast<BTBEntry *>(
+                    setAssocIndexing->getEntry(set, way));
+            }
+        }
+        return nullptr;
+    }
 
     const Addr tag = setAssocIndexing->extractTag(instPC);
     for (auto *candidate : setAssocIndexing->possibleEntries({instPC, tid})) {
@@ -153,6 +178,12 @@ SimpleBTB::update(ThreadID tid, Addr instPC,
 
     btb.insertEntry({instPC, tid}, victim);
     victim->update(target, inst);
+
+    if (!tagMirror.empty()) {
+        const auto key = victim->getTag();
+        tagMirror[victim->getSet() * mirrorAssoc + victim->getWay()] =
+            mirrorKey(key.address, key.tid);
+    }
 }
 
 

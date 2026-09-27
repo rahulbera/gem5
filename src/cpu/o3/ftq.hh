@@ -307,7 +307,7 @@ class FTQ
     /** Pushes a fetch target into the back/tail of the FTQ.
      *  @param fetchTarget Pointer to the fetch target to be inserted.
      */
-    void insert(ThreadID tid, FetchTargetPtr fetchTarget);
+    void insert(ThreadID tid, const FetchTargetPtr &fetchTarget);
 
     /** Squashes all fetch targets in the FTQ for a specific thread. */
     void squash(ThreadID tid);

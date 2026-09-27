@@ -183,7 +183,7 @@ FTQ::forAllBackward(ThreadID tid, std::function<void(FetchTargetPtr &)> f)
 }
 
 void
-FTQ::insert(ThreadID tid, FetchTargetPtr fetchTarget)
+FTQ::insert(ThreadID tid, const FetchTargetPtr &fetchTarget)
 {
     assert(ftq[tid].size() < numEntries);
     ftq[tid].push_back(fetchTarget);
@@ -198,7 +198,7 @@ FTQ::insert(ThreadID tid, FetchTargetPtr fetchTarget)
 void
 FTQ::squash(ThreadID tid)
 {
-    for (auto ft : ftq[tid]) {
+    for (const auto &ft : ftq[tid]) {
         assert(ft->bpuHistory == nullptr);
         ppFTQRemove->notify(ft);
     }
@@ -210,7 +210,7 @@ FTQ::squash(ThreadID tid)
 void
 FTQ::squashSanityCheck(ThreadID tid)
 {
-    for (auto ft : ftq[tid]) {
+    for (const auto &ft : ftq[tid]) {
         assert(ft->bpuHistory == nullptr);
     }
 }

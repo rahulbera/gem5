@@ -650,7 +650,10 @@ BAC::generateFetchTargets(ThreadID tid, bool &status_change)
         cur_pc.set(search_addr);
 
         // Make a copy of the current PC since the BPU will update it.
-        std::unique_ptr<PCStateBase> next_pc(cur_pc.clone());
+        // The copy lives in a reused per-thread object rather than a heap
+        // clone per fetch target; set() copies every field of the PC.
+        std::unique_ptr<PCStateBase> &next_pc = nextFTPC[tid];
+        set(next_pc, cur_pc);
 
         if (branch_found) {
             assert(staticInst);
@@ -855,7 +858,7 @@ BAC::updatePreDecode(ThreadID tid, const InstSeqNum seqNum,
         bpu->branchPlaceholder(tid, pc.instAddr(), inst->isUncondCtrl(),
                                hist->bpHistory);
 
-        set(hist->target, std::unique_ptr<PCStateBase>(pc.clone()));
+        set(hist->target, pc);
         inst->advancePC(*hist->target);
     }
 

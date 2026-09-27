@@ -1367,3 +1367,51 @@ too), and 4/5 are faster than the paired Trial 14 run.
   this result owes something to noise. The change is kept because it met the rule, it
   is correct by construction, and it simplifies the search loop.
 - **Binary:** `build/ARM_p2/gem5.fast.t17`, the current best.
+
+### Trial 18 — front-end bundle: FTQ reference counts, next-PC scratch, BTB tag mirror
+
+**Summary:** three front-end changes, bundled. The fetch-target queue stops copying
+`shared_ptr`s. BAC reuses one next-PC object per thread instead of cloning a PC per
+fetch target. The BTB keeps a packed copy of every slot's valid bit, thread and tag, so
+the window search reads one word per way instead of a 100-byte entry. Four of five
+checkpoints are faster, llvm the most (+5.6%), and stats are bit-identical.
+**Accepted.**
+
+**Key idea:**
+- **FTQ:** `FetchTargetPtr` is a `std::shared_ptr`, so every copy is an atomic
+  increment and decrement (the lesson of Trial 14). `FTQ::insert()` took it by value,
+  and `squash()` and `squashSanityCheck()` copied every queued target in their loops.
+  They now use references. `readHead()` keeps returning a copy, because fetch keeps
+  using the fetch target after popping it.
+- **BAC:** `generateFetchTargets()` cloned the current PC on the heap for every fetch
+  target (`next_pc`). It now updates a per-thread `nextFTPC` object with `set()`, which
+  copies every field. `finalize()` and `predict()` copy from it and keep no pointer to
+  it. The history record's target no longer goes through a throwaway clone
+  (`set(hist->target, pc)` instead of `set(hist->target, unique_ptr(pc.clone()))`).
+- **BTB tag mirror:** `SimpleBTB` keeps `tagMirror`, one `uint64_t` per slot in set-major
+  order. A valid slot holds `1<<63 | tid<<47 | tag`; an invalid one holds 0.
+  `probe()` compares the wanted key against the set's six words and touches the
+  `BTBEntry` only on a hit. A slot equals the key exactly when `matchTag()` would be
+  true. `update()` (the only insertion path, right after `insertEntry()`) and
+  `memInvalidate()` (the only clearing path) keep it in step. It is enabled only when
+  tags fit in 47 bits (`tag_bits = 18` here). Otherwise the Trial 13 path is used.
+  With 12288 entries the mirror is 96 KB, against about 1.2 MB of `BTBEntry` objects.
+
+**Files targeted:** `src/cpu/o3/{ftq.hh,ftq.cc,bac.hh,bac.cc}`,
+`src/cpu/pred/{btb_entry.hh,simple_btb.hh,simple_btb.cc}`. Built in 86 s.
+
+| Checkpoint | Paired reference KIPS (T17) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 787.5 | 782.5 | −0.64% | slower (within noise) | +10.68% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 808.4 | 818.0 | +1.18% | faster (within noise) | +8.21% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 569.1 | 585.1 | +2.81% | faster | +15.11% | 1.92% | yes |
+| 723.llvm_r.1.0 | 412.9 | 436.0 | +5.61% | faster | +13.72% | 0.02% | yes |
+| 753.ns3_r.2.0 | 455.0 | 468.5 | +2.97% | faster | +11.86% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference too), and 4/5
+are faster than the paired Trial 17 run.
+- **The pattern fits the mechanism:** llvm, whose instruction footprint makes the BTB
+  search walk the most sets, gains the most (+5.6%). The two stockfish checkpoints, with
+  small hot loops whose BTB sets stay cached, are flat. The deep dive estimated the tag
+  mirror alone at +0.4–1.0% on llvm; the combined effect is larger.
+- **Binary:** `build/ARM_p2/gem5.fast.t18`, the current best.

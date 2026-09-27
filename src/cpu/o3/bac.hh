@@ -373,6 +373,10 @@ class BAC
     /** The decoupled PC which runs ahead of fetch */
     std::unique_ptr<PCStateBase> bacPC[MaxThreads];
 
+    /** Per-thread scratch for the next fetch target's start PC, reused by
+     *  generateFetchTargets() instead of cloning a PC per fetch target. */
+    std::unique_ptr<PCStateBase> nextFTPC[MaxThreads];
+
     /** Variable that tracks if BAC has written to the time buffer this
      * cycle. Used to tell CPU if there is activity this cycle.
      */

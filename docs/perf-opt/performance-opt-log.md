@@ -1297,3 +1297,35 @@ paired Trial 14 run.
 - **Why:** after Trial 13, a tag lookup no longer copies the set and computes its tag
   once, so the saved lookup is cheap. The deep dive expected this, putting the gain at
   0.3–0.5% after Trial 13 (from 0.9–1.3% before it).
+
+### Trial 16 — call shared-library functions without PLT stubs (`-fno-plt`)
+
+**Summary:** compiling with `-fno-plt` makes calls into shared libraries (tcmalloc's
+`new`/`delete`, libstdc++'s list hooks) go through the GOT directly instead of through
+PLT stubs. Stats are bit-identical, but every checkpoint moved by less than ±1.1%, and
+only 2 of 5 were faster. **Rejected.**
+
+**Key idea:** the profile put the PLT stubs at 1.7% of self time, since tcmalloc is a
+shared library and gem5 allocates and frees constantly. `-fno-plt` replaces each
+`call foo@plt` with `call *foo@GOTPCREL(%rip)`, which removes a jump per call.
+
+**Files and flags targeted:** no source change. `-fno-plt` is added to `CCFLAGS_EXTRA`
+and `LINKFLAGS_EXTRA`, on top of the Trial 8b recipe. Built in 250 s (full rebuild).
+- **Effect on the binary:** PLT calls went from 241,734 to 1, and `.text` grew by
+  400 KB to 30.42 MB, since each indirect call is a byte longer.
+
+| Checkpoint | Paired reference KIPS (T14) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 791.7 | 790.4 | −0.17% | slower (within noise) | +11.81% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 830.7 | 836.9 | +0.76% | faster (within noise) | +10.72% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 573.8 | 572.7 | −0.19% | slower (within noise) | +12.67% | 1.92% | yes |
+| 723.llvm_r.1.0 | 436.0 | 436.5 | +0.12% | faster | +13.84% | 0.02% | yes |
+| 753.ns3_r.2.0 | 471.5 | 466.6 | −1.04% | slower (within noise) | +11.41% | 2.21% | yes |
+
+**Verdict: rejected; no effect.** Stats are bit-identical on 5/5, and only 2/5 are faster.
+All five changes are within ±1.04%.
+- **Why:** a PLT stub is an indirect jump that the branch predictor learns, so on a
+  modern core the stub costs about as much as the GOT-indirect call that replaces it.
+  The 400 KB of extra code also works against a front-end-bound binary. The 1.7% of
+  self time the profile gave the stubs mostly measures how often the allocator runs,
+  not what the stub adds.

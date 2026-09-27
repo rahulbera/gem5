@@ -113,6 +113,23 @@ SimpleBTB::lookup(ThreadID tid, Addr instPC, BranchType type)
     return nullptr;
 }
 
+bool
+SimpleBTB::findFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                           Addr &addr, StaticInstPtr &inst)
+{
+    // Same addresses and result as the base class's valid()/getInst()
+    // loop, with one probe per address and no virtual call per step.
+    for (addr = start; ; addr += step) {
+        if (BTBEntry *entry = probe(addr, tid)) {
+            inst = entry->inst;
+            return true;
+        }
+        if (addr - start >= width) {
+            return false;
+        }
+    }
+}
+
 const StaticInstPtr
 SimpleBTB::getInst(ThreadID tid, Addr instPC)
 {

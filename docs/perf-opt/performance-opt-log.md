@@ -1329,3 +1329,41 @@ All five changes are within ±1.04%.
   The 400 KB of extra code also works against a front-end-bound binary. The 1.7% of
   self time the profile gave the stubs mostly measures how often the allocator runs,
   not what the stub adds.
+
+### Trial 17 — search a whole fetch-target window in one BTB call
+
+**Summary:** a follow-up to Trial 10. The fetch-target search now asks the BTB once per
+fetch target for the first branch in its window, instead of making one virtual call per
+4-byte step and then looking the branch up again for its instruction. Stats are
+bit-identical, and 4 of 5 checkpoints are faster. **Accepted by the rule, with a caveat
+about noise.**
+
+**Key idea:** `BranchTargetBuffer::findFirstBranch(tid, start, width, step, addr, inst)`
+scans `start, start + step, …` up to and including the first address at least `width`
+bytes past `start`, which is exactly the old loop's stop rule. It returns whether a
+branch was found, its address, and its static instruction. The base class implements it
+with `valid()` and `getInst()`, so other BTBs behave as before. `SimpleBTB` overrides it
+with one `probe()` per address. `BAC::generateFetchTargets` calls it through a new
+`BPredUnit::BTBFindFirstBranch` and no longer calls `BTBGetInst` for the branch it found.
+Neither path touches replacement state or stats.
+
+**Files targeted:** `src/cpu/pred/{btb.hh,simple_btb.hh,simple_btb.cc,bpred_unit.hh}`,
+`src/cpu/o3/bac.cc`. Built in 259 s: the previous build used Trial 16's flags, so this
+one recompiled everything.
+
+| Checkpoint | Paired reference KIPS (T14) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 786.4 | 793.7 | +0.93% | faster | +12.26% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 841.6 | 827.8 | −1.65% | slower (within noise) | +9.50% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 583.5 | 590.2 | +1.15% | faster (within noise) | +16.12% | 1.92% | yes |
+| 723.llvm_r.1.0 | 422.9 | 423.9 | +0.24% | faster | +10.56% | 0.02% | yes |
+| 753.ns3_r.2.0 | 467.0 | 489.5 | +4.81% | faster | +16.88% | 2.21% | yes |
+
+**Verdict: accepted by the rule.** Stats are bit-identical on 5/5 (the paired reference
+too), and 4/5 are faster than the paired Trial 14 run.
+- **Caveat:** the pattern does not match the mechanism. llvm scans about 3× more
+  addresses per instruction than the others and should gain most, yet it moved only
+  +0.24%, while ns3 moved +4.81%. The real effect is probably small (about 0.5–1%), and
+  this result owes something to noise. The change is kept because it met the rule, it
+  is correct by construction, and it simplifies the search loop.
+- **Binary:** `build/ARM_p2/gem5.fast.t17`, the current best.

@@ -66,6 +66,8 @@ class SimpleBTB : public BranchTargetBuffer
                 BranchType type = BranchType::NoBranch,
                 StaticInstPtr inst = nullptr) override;
     const StaticInstPtr getInst(ThreadID tid, Addr instPC) override;
+    bool findFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                         Addr &addr, StaticInstPtr &inst) override;
 
   private:
 

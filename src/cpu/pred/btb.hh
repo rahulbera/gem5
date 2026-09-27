@@ -88,6 +88,35 @@ class BranchTargetBuffer : public ClockedObject
      */
     virtual const StaticInstPtr getInst(ThreadID tid, Addr instPC) = 0;
 
+    /**
+     * Find the first branch the BTB holds among the instruction addresses
+     * start, start + step, start + 2 * step, ..., scanning up to and
+     * including the first address at least width bytes past start. This
+     * is the decoupled front end's per-fetch-target search.
+     *
+     * The default does what valid() and getInst() do, address by address;
+     * like them, it updates no replacement state and no stats.
+     *
+     * @param addr Set to the branch's address if one is found, else to
+     *        the last address scanned.
+     * @param inst Set to the branch's static instruction if one is found.
+     * @return Whether a branch was found.
+     */
+    virtual bool
+    findFirstBranch(ThreadID tid, Addr start, Addr width, Addr step,
+                    Addr &addr, StaticInstPtr &inst)
+    {
+        for (addr = start; ; addr += step) {
+            if (valid(tid, addr)) {
+                inst = getInst(tid, addr);
+                return true;
+            }
+            if (addr - start >= width) {
+                return false;
+            }
+        }
+    }
+
 
     /** Updates the BTB with the target of a branch.
      *  @param inst_pc The address of the branch being updated.

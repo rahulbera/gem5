@@ -105,6 +105,12 @@ class BTBSetAssociative : public BTBIndexingPolicy
         return possibleEntries(key);
     }
 
+    const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const KeyType &key) const override
+    {
+        return &possibleEntries(key);
+    }
+
     /**
      * The same entries as getPossibleEntries(), in the same order, without
      * copying them.

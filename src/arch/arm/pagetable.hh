@@ -222,6 +222,13 @@ class TLBSetAssociative : public TLBIndexingPolicy
         return sets[set_number];
     }
 
+    const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const KeyType &key) const override
+    {
+        Addr set_number = (key.va >> key.pageSize) & setMask;
+        return &sets[set_number];
+    }
+
     Addr
     regenerateAddr(const KeyType &key,
                    const ReplaceableEntry *entry) const override

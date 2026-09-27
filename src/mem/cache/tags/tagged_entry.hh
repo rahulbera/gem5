@@ -94,6 +94,12 @@ class TaggedSetAssociative : public TaggedIndexingPolicy
         return sets[extractSet(key)];
     }
 
+    const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const KeyType &key) const override
+    {
+        return &sets[extractSet(key)];
+    }
+
     Addr
     regenerateAddr(const KeyType &key,
                    const ReplaceableEntry *entry) const override
@@ -159,6 +165,20 @@ class TaggedEntry : public ReplaceableEntry
         assert(extractTag);
         return isValid() && (getTag() == extractTag(key.address)) &&
             (isSecure() == key.secure);
+    }
+
+    /**
+     * Same as match(), for a tag already computed from the address with
+     * the extractor this entry was registered with.
+     *
+     * @param tag The tag of the address being looked up.
+     * @param is_secure Whether the lookup is for the secure space.
+     * @return True if the tag information match this entry's.
+     */
+    bool
+    matchTag(Addr tag, bool is_secure) const
+    {
+        return isValid() && (getTag() == tag) && (isSecure() == is_secure);
     }
 
     /**

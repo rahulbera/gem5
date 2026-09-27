@@ -118,6 +118,9 @@ class SetAssociative : public BaseIndexingPolicy
     std::vector<ReplaceableEntry*> getPossibleEntries(const Addr &addr) const
                                                                      override;
 
+    const std::vector<ReplaceableEntry*> *
+    possibleEntriesInPlace(const Addr &addr) const override;
+
     /**
      * Regenerate an entry's address from its tag and assigned set and way.
      *

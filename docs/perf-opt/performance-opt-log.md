@@ -1179,3 +1179,49 @@ paired Trial 11 run.
 - **Lesson:** the deep dive's allocator estimates were already rescaled down once. With
   this protocol, allocation-only changes need to remove much more than a few
   allocations per instruction to be measurable.
+
+### Trial 13 — set-associative lookups without copying the set
+
+**Summary:** every lookup in a set-associative cache, TLB or predictor table copied its
+set's candidate vector (a heap allocation), and cache lookups also called a
+`std::function` per way to compute the tag. A new `possibleEntriesInPlace()` hands out
+the set in place, and cache lookups compute the tag once. Stats are bit-identical, and 3
+of 5 checkpoints are faster: the three memory-heavier ones. **Accepted, narrowly.**
+
+**Key idea:** `IndexingPolicyTemplate::getPossibleEntries()` returns a
+`std::vector<ReplaceableEntry*>` by value, and the hot users (`BaseTags::findBlock` for
+every cache access and prefetcher probe, `AssociativeCache::findEntry` for prefetcher
+tables, `ArmISA::TLB::Table::findEntry` for every TLB lookup) iterate over that copy.
+- **New virtual accessor:** `possibleEntriesInPlace()` returns a pointer to the same
+  vector, or `nullptr` if a policy computes its candidates. The default is `nullptr`,
+  and the users then keep the copying path. The policies that store their sets override
+  it: `SetAssociative`, `TaggedSetAssociative`, `TLBSetAssociative` and
+  `BTBSetAssociative`. The entries and their order are unchanged.
+- **Tag computed once:** `BaseTags::findBlock` computes the tag once with the indexing
+  policy and compares it with a new `TaggedEntry::matchTag()`. `BaseSetAssoc`
+  registers every block with `genTagExtractor(indexingPolicy)`, so each block's
+  extractor returns exactly this value. `SectorTags` and `FALRU` have their own
+  `findBlock` and are unaffected.
+- **Victim selection too:** `AssociativeCache::findVictim` passes the in-place set to
+  `getVictim()`, which takes the candidates by const reference.
+
+**Files targeted:** `src/mem/cache/tags/indexing_policies/{base.hh,set_associative.hh,set_associative.cc}`,
+`src/mem/cache/tags/{tagged_entry.hh,base.cc}`, `src/base/cache/associative_cache.hh`,
+`src/arch/arm/{pagetable.hh,tlb.cc}`, `src/cpu/pred/btb_entry.hh`. Built in 122 s.
+
+| Checkpoint | Paired reference KIPS (T11) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 795.0 | 778.1 | −2.13% | slower | +10.06% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 815.8 | 808.5 | −0.89% | slower (within noise) | +6.96% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 564.2 | 572.4 | +1.45% | faster (within noise) | +12.62% | 1.92% | yes |
+| 723.llvm_r.1.0 | 420.1 | 431.3 | +2.68% | faster | +12.49% | 0.02% | yes |
+| 753.ns3_r.2.0 | 462.2 | 465.0 | +0.61% | faster (within noise) | +11.04% | 2.21% | yes |
+
+**Verdict: accepted by the rule.** Stats are bit-identical on 5/5, and 3/5 are faster
+than the paired Trial 11 run. This is the minimum majority.
+- **The split fits the change:** llvm, sqlite and ns3 make 0.48–0.89 instruction-TLB
+  lookups per instruction (much of it fetch-directed prefetching) against 0.14–0.17
+  for stockfish. They also make 1.2–1.6× more data-TLB and L1D lookups per
+  instruction (from `trial1-fast` stats), and they are the three that got faster. The stockfish losses (−2.1%, −0.9%) are about the size of the noise.
+  The mean over all five is +0.34%.
+- **Binary:** `build/ARM_p2/gem5.fast.t13`, the reference for Trial 14.

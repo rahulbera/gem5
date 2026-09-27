@@ -611,3 +611,117 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
 8. **Outside the KIPS metric:** 50–105 s per run go to startup and checkpoint restore
    (Baseline). That matters for bulk throughput, not for KIPS.
 
+## Cluster port (kratos2)
+
+**Goal:** rebuild the accepted recipe on the cluster, check that it reproduces the local
+stats bit for bit, and measure its speedup on the cluster's own CPUs. The cluster checkout
+is `rbdev` at `8d0dafc`, the same simulator source as `feat/opt`, so no push was needed.
+
+**Build (login node, per the user's instruction, detached with `nice -n 10`):**
+
+```
+CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA="-O3" LINKFLAGS_EXTRA="-Wl,-rpath,/home/rahbera/agentic-cpu/lib" \
+    scons build/ARM_rel/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+```
+
+- **Toolchain:** g++-12 on the login node is 12.1.0 (12.4.0 locally). The build took
+  1039 s, much of it SCons reading build scripts and probing compilers over NFS.
+- **Shared libraries:** the login node links tcmalloc 2.9.1 and protobuf 3.12.4, which
+  some compute nodes lack.
+  - tcmalloc is missing on several node classes.
+  - `libprotobuf.so.23` is missing on `safari-nexus1`. The first agentic validation
+    failed there with "cannot open shared object file", before the user excluded that
+    node.
+  - Both libraries now live in `/home/rahbera/agentic-cpu/lib` on NFS, and the binary's
+    RUNPATH ends with that dir, so nodes without them fall back to the copies.
+- **Node exclusion:** every Slurm script now carries `#SBATCH --exclude=safari-nexus1`,
+  on the user's instruction.
+
+**Validation.** `slurm/compare-two.sbatch` runs the old cluster binary (A:
+`build/ARM/gem5.opt`, gcc 11.4, no tcmalloc, no LTO) and the new one (B:
+`build/ARM_rel/gem5.fast`) at the same time on one node, each pinned to its own
+allocated CPU. The window is 10M + 30M.
+
+| Checkpoint | Node (CPU) | A: old `.opt` KIPS | B: new `.fast` KIPS | Speedup | Stats |
+|---|---|---|---|---|---|
+| SPEC `723.llvm_r.1.0` | kratos0 (Xeon Gold 5118), own core each | 82.4 | 117.0 | **+42.0%** | A and B each bit-identical to the local runs of the same variant |
+| agentic `gin-2121/cpt.0` | kratos10, separate cores | 78.9 | 115.9 | **+46.9%** | identical except `numMiscRegReads` (the Trial 1 assert artifact); IPC 0.817 both |
+| SPEC `723.llvm_r.1.0` | kratos6 (Xeon Gold 5118), **SMT siblings 9/33** | 57.5 | 66.6 | +15.8% | bit-identical |
+
+- **Results are portable across builds and hosts:** the cluster `.opt` (gcc 11.4)
+  matches the local `.opt` (g++ 12.4), and the cluster `.fast` (g++ 12.1) matches the
+  local `.fast` (g++ 12.4), bit for bit. At the generic x86-64 target, results do not
+  depend on compiler version or host, so local and cluster numbers can be compared
+  directly. Only the codegen target matters (Trial 5b).
+- **SMT sharing hurts gem5 badly.** The cluster allocates by logical CPU
+  (`SelectTypeParameters=CR_CPU_MEMORY`), so a job can share a physical core with
+  another job. On the shared core, each gem5 ran 30% (`.opt`) to 43% (`.fast`) slower
+  than on its own core, and the new binary's advantage shrank from +42% to +16%. The
+  front-end-bound workload suffers most from a sibling competing for fetch and decode.
+  - **For clean speed measurements:** use `--hint=nomultithread`.
+  - **For bulk throughput:** packing siblings still yields more total work per node,
+    but each job runs slower. Budget wall time accordingly.
+
+**PGO on the cluster (bulk-run binary).** The PGO pipeline was redone on the cluster,
+because profiles are tied to the exact compiler (12.1 there, 12.4 here). The training
+set is **agentic**, since bulk runs will be agentic. It is drawn with
+`random.Random(20260927).sample(131 agentic checkpoints, 3)`, excluding the validation
+checkpoint: `gson-1093/cpt.2` (Java), `ripgrep-2209/cpt.3` (Rust), `jq-2598/cpt.2` (C).
+
+1. **Instrumented build** on the login node (1475 s):
+
+   ```
+   CC=gcc-12 CXX=g++-12 CCFLAGS_EXTRA="-O3 -fprofile-generate" \
+       LINKFLAGS_EXTRA="-fprofile-generate -Wl,-rpath,/home/rahbera/agentic-cpu/lib" \
+       scons build/ARM_pgo/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+   ```
+
+2. **Training:** one Slurm job, 3 CPUs, on kratos3, running `slurm/pgo-train.sbatch` with
+   the three checkpoints, 10M+30M each, under `virt_run.py`. It took 36 min and wrote
+   2052 `.gcda` files.
+3. **Optimized build**, in the same dir, with no profile mismatch warnings:
+
+   ```
+   CC=gcc-12 CXX=g++-12 \
+       CCFLAGS_EXTRA="-O3 -fprofile-use -fprofile-partial-training -Wno-missing-profile" \
+       LINKFLAGS_EXTRA="-fprofile-use -fprofile-partial-training -Wl,-rpath,/home/rahbera/agentic-cpu/lib" \
+       scons build/ARM_pgo/gem5.fast -j32 --ignore-style --with-lto --linker=bfd
+   ```
+
+| Checkpoint (kratos0, own core each) | Non-PGO `.fast` KIPS | PGO `.fast` KIPS | PGO gain | Stats |
+|---|---|---|---|---|
+| agentic `gin-2121/cpt.0` (not in training) | 84.7 | 101.1 | **+19.4%** | bit-identical to non-PGO, and to the kratos10 run |
+| SPEC `723.llvm_r.1.0` (not in training) | 115.6 | 136.1 | **+17.7%** | bit-identical to local `trial1-fast` |
+
+The agentic-trained profile helps the SPEC checkpoint too. On Skylake-SP the PGO gain
+(+18–19%) is larger than on Zen 5 (+8–11%). The cluster PGO binary runs 1.65× faster
+than the old cluster `.opt` on SPEC `723.llvm_r` (136.1 vs 82.4 KIPS, same node class).
+
+**Bulk-run binary:** `/home/rahbera/agentic-cpu/gem5/build/ARM_pgo/gem5.fast` (PGO,
+agentic-trained). **Development binary:** `build/ARM_rel/gem5.fast` (the same recipe
+without PGO). Keep `build/ARM/gem5.opt` for debugging (`--debug-flags`, asserts).
+
+## Summary
+
+| # | Lever | Verdict | Effect on the local test suite |
+|---|---|---|---|
+| 1 | `.fast` variant | accepted (user ruling) | +6.4–8.6% |
+| 2 | tcmalloc | accepted | +21.2–23.0% |
+| 3 | `ext/` at `-O3` | accepted narrowly; later shown to be layout noise | −1.8 … +3.4% |
+| 4 | LTO (bfd; gold and mold compared) | accepted | +1.3–6.3% (quiet rerun) |
+| 5a | `-march=x86-64-v2` | rejected: not faster | −3.4 … +1.3% |
+| 5b | `-march=x86-64-v3 -ffp-contract=off` | rejected: **changes results**, and slower | −3.4 … +1.3% |
+| 6 | PGO | accepted, **for bulk-run binaries only** (user decision) | +8.1–11.3% |
+
+- **Local cumulative:** the development recipe (1–4) is +35–39% over the `.opt`
+  baseline; with PGO it is **+49.5–53.2%**. Stats are bit-identical throughout, except
+  Trial 1's assert-inflated `numMiscRegReads`.
+- **On kratos2:** the development recipe is +42% (SPEC) and +47% (agentic) over the old
+  cluster `.opt`. PGO adds +18–19%, for about **1.65×** on SPEC against the old binary on
+  the same node class.
+- **Unused modules** were never the problem: nothing un-instantiated runs, and the
+  profile shows no time in Ruby, SystemC or the GPU.
+- **What gem5 spends its time on:** it is ~46% front-end bound. Its time goes to O3
+  scheduling, per-instruction heap churn and TAGE-SC-L; that is part 2's work list.
+- **Open correctness item:** results depend on the codegen target (Trial 5b). Suspect
+  the uninitialized TAGE `BranchInfo` arrays.

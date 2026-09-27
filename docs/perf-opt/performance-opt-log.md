@@ -1468,3 +1468,43 @@ binary) is identical to `trial1-fast`, as always.
   (Trial 5b), read on every prediction without being initialized. There may be others.
   Until this is found, **any change to object sizes or memory layout can change
   results**, and the gate will reject it even when it is correct.
+
+### Trial 20 — pooled allocation for per-instruction objects
+
+**Summary:** a small base class, `PooledNew<T>`, gives a class its own `operator new`
+and `delete` that recycle freed objects through a per-thread free list. Applied to four
+classes created and destroyed per instruction or per branch, it keeps stats
+bit-identical and makes 3 of 5 checkpoints faster. **Accepted by the rule, narrowly.**
+
+**Key idea:** tcmalloc's fast path is already a free list, but it takes about 20 host
+cycles per allocate/free pair against a handful for a class-specific list. Only where
+memory comes from changes; constructors, destructors and object lifetimes are exactly
+as before, so behavior cannot change. Pooled classes:
+- `ArmISA::PCState`, which the CPU clones several times per instruction (DynInst PCs,
+  fetch-target PCs, BPU history targets).
+- `o3::DependencyEntry`, about one per register dependence.
+- `BPredUnit::PredictorHistory`, one per predicted branch.
+- `o3::InstructionQueue::FUCompletion`, one event per multi-cycle operation.
+
+Objects of a derived class with a different size fall back to the global heap. The
+free list is `thread_local`.
+
+**Files targeted:** `src/base/pooled_new.hh` (new), `src/arch/arm/pcstate.hh`,
+`src/cpu/o3/{dep_graph.hh,inst_queue.hh}`, `src/cpu/pred/bpred_unit.hh`. Built in 249 s.
+
+| Checkpoint | Paired reference KIPS (T18) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 794.4 | 807.8 | +1.69% | faster | +14.26% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 817.4 | 861.3 | +5.37% | faster | +13.95% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 575.0 | 600.9 | +4.51% | faster | +18.22% | 1.92% | yes |
+| 723.llvm_r.1.0 | 444.2 | 434.1 | −2.26% | slower | +13.22% | 0.02% | yes |
+| 753.ns3_r.2.0 | 500.7 | 484.8 | −3.18% | slower | +15.76% | 2.21% | yes |
+
+**Verdict: accepted by the rule.** Stats are bit-identical on 5/5, and 3/5 are faster than
+the paired Trial 18 run. The mean over all five is +1.2%, with swings in both directions
+larger than the effect, so this is a small gain measured with a lot of noise.
+- **Evidence for Trial 19:** pooling changes where tens of millions of heap objects
+  live, and results stayed bit-identical, as they did for the allocation changes of
+  Trials 12 and 14. So the layout-dependent behavior of Trials 5b and 19 does not follow
+  heap allocation in general.
+- **Binary:** `build/ARM_p2/gem5.fast.t20`, the current best.

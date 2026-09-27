@@ -44,6 +44,7 @@
 
 #include <deque>
 
+#include "base/pooled_new.hh"
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
@@ -281,7 +282,7 @@ class BPredUnit : public SimObject
      *         +-------------------------------------+
      *
      */
-    struct PredictorHistory
+    struct PredictorHistory : public PooledNew<PredictorHistory>
     {
         /**
          * Makes a predictor history struct that contains any

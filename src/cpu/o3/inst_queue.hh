@@ -47,6 +47,7 @@
 #include <queue>
 #include <vector>
 
+#include "base/pooled_new.hh"
 #include "base/statistics.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
@@ -192,7 +193,7 @@ class InstructionQueue
     typedef typename std::list<DynInstPtr>::iterator ListIt;
 
     /** FU completion event class. */
-    class FUCompletion : public Event
+    class FUCompletion : public Event, public PooledNew<FUCompletion>
     {
       private:
         /** Executing instruction. */

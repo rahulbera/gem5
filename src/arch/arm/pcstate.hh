@@ -42,6 +42,7 @@
 #define __ARCH_ARM_PCSTATE_HH__
 
 #include "arch/generic/pcstate.hh"
+#include "base/pooled_new.hh"
 #include "base/bitunion.hh"
 #include "base/types.hh"
 #include "debug/Decoder.hh"
@@ -66,7 +67,8 @@ BitUnion8(ITSTATE)
     Bitfield<1, 0> bottom2;
 EndBitUnion(ITSTATE)
 
-class PCState : public GenericISA::UPCState<4>
+/** Pooled: the CPU clones PC states several times per instruction. */
+class PCState : public GenericISA::UPCState<4>, public PooledNew<PCState>
 {
   protected:
 

@@ -1139,3 +1139,43 @@ are faster than the paired Trial 10 run.
   candidate run in Trial 10 (for example llvm 405.6 against 422.7). That is why the
   cumulative column (against the part-2 baseline mean) understates the chained gain.
 - **Binary:** `build/ARM_p2/gem5.fast.t11`, the reference for Trial 12.
+
+### Trial 12 — `DynInst` allocations: list-backed `instResult` and a scratch PC
+
+**Summary:** two changes that remove heap allocations per instruction, bundled. The
+`instResult` queue's default `std::deque` allocated two blocks per `DynInst` even though
+nothing fills it without a checker CPU. `mispredicted()` cloned the PC on the heap for
+every executed control instruction. Stats are bit-identical, but only 2 of 5 checkpoints
+got faster (−2.0% to +0.75%). **Rejected.**
+
+**Key idea:**
+- **`instResult`:** `std::queue<InstResult>` defaults to a `std::deque`, whose
+  constructor allocates its map and first block. `setResult()` only records when the
+  `RecordResult` flag is set (for a checker), so in these runs the queue stays empty.
+  Backing it with `std::list`, which allocates nothing until used, removes two
+  allocations and two frees per `DynInst` (1.1–1.6 `DynInst`s per committed
+  instruction).
+- **`mispredicted()`:** a new overload takes a caller-owned scratch PC, kept in IEW (one
+  per CPU, so it only ever holds this CPU's PC type). `set()` updates it in place.
+  ARM's `PCState::update()` copies every field that a clone would, so the result is
+  unchanged.
+
+**Files targeted:** `src/cpu/o3/dyn_inst.hh`, `src/cpu/o3/iew.{hh,cc}`. Patch:
+`docs/perf-opt/patches/t12-dyninst-allocs.patch`. Built in 74 s.
+
+| Checkpoint | Paired reference KIPS (T11) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 770.6 | 775.2 | +0.60% | faster (within noise) | +9.65% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 826.4 | 811.5 | −1.80% | slower (within noise) | +7.36% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 554.4 | 550.3 | −0.74% | slower (within noise) | +8.27% | 1.92% | yes |
+| 723.llvm_r.1.0 | 425.7 | 428.9 | +0.75% | faster | +11.86% | 0.02% | yes |
+| 753.ns3_r.2.0 | 473.1 | 463.7 | −2.00% | slower (within noise) | +10.71% | 2.21% | yes |
+
+**Verdict: rejected.** Stats are bit-identical on 5/5, but only 2/5 are faster than the
+paired Trial 11 run.
+- **Why:** removing about four small allocations per instruction (roughly 20 host cycles
+  each, against 15–28 K host instructions per simulated instruction) is worth well
+  under 1%, and every change is inside the noise.
+- **Lesson:** the deep dive's allocator estimates were already rescaled down once. With
+  this protocol, allocation-only changes need to remove much more than a few
+  allocations per instruction to be measurable.

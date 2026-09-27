@@ -1,0 +1,76 @@
+diff --git a/src/cpu/o3/dyn_inst.hh b/src/cpu/o3/dyn_inst.hh
+index 9384081032..c904a8d048 100644
+--- a/src/cpu/o3/dyn_inst.hh
++++ b/src/cpu/o3/dyn_inst.hh
+@@ -220,9 +220,11 @@ class DynInst : public ExecContext, public RefCounted
+ 
+   protected:
+     /** The result of the instruction; assumes an instruction can have many
+-     *  destination registers.
++     *  destination registers. Only filled when results are recorded for
++     *  a checker CPU. Backed by a list, which unlike the default deque
++     *  allocates nothing while it stays empty.
+      */
+-    std::queue<InstResult> instResult;
++    std::queue<InstResult, std::list<InstResult>> instResult;
+ 
+     /** PC state for this instruction. */
+     std::unique_ptr<PCStateBase> pc;
+@@ -854,6 +856,20 @@ class DynInst : public ExecContext, public RefCounted
+         return *next_pc != *predPC;
+     }
+ 
++    /**
++     * Same as mispredicted(), computing the next PC in a caller-owned
++     * scratch PC instead of a fresh heap clone. The scratch must only
++     * ever hold PCs of this CPU's ISA; set() then copies every field of
++     * the PC into it, so the result is the same as with a clone.
++     */
++    bool
++    mispredicted(std::unique_ptr<PCStateBase> &scratch) const
++    {
++        set(scratch, *pc);
++        staticInst->advancePC(*scratch);
++        return *scratch != *predPC;
++    }
++
+     //
+     //  Instruction types.  Forward checks to StaticInst object.
+     //
+diff --git a/src/cpu/o3/iew.cc b/src/cpu/o3/iew.cc
+index 034810949a..f51c6dd561 100644
+--- a/src/cpu/o3/iew.cc
++++ b/src/cpu/o3/iew.cc
+@@ -1369,7 +1369,7 @@ IEW::executeInsts()
+             // that have not been executed.
+             bool loadNotExecuted = !inst->isExecuted() && inst->isLoad();
+ 
+-            if (inst->mispredicted() && !loadNotExecuted) {
++            if (inst->mispredicted(mispredictScratchPC) && !loadNotExecuted) {
+                 fetchRedirect[tid] = true;
+ 
+                 DPRINTF(IEW, "[tid:%i] [sn:%llu] Execute: "
+@@ -1742,7 +1742,7 @@ IEW::checkMisprediction(const DynInstPtr& inst)
+         !toCommit->squash[tid] ||
+         toCommit->squashedSeqNum[tid] > inst->seqNum) {
+ 
+-        if (inst->mispredicted()) {
++        if (inst->mispredicted(mispredictScratchPC)) {
+             fetchRedirect[tid] = true;
+ 
+             DPRINTF(IEW, "[tid:%i] [sn:%llu] Execute: "
+diff --git a/src/cpu/o3/iew.hh b/src/cpu/o3/iew.hh
+index 9a74ec6cea..92ccfd0913 100644
+--- a/src/cpu/o3/iew.hh
++++ b/src/cpu/o3/iew.hh
+@@ -459,6 +459,10 @@ class IEW
+     void printAvailableInsts();
+ 
+   public:
++    /** Scratch PC for DynInst::mispredicted(), reused to avoid a heap
++     *  clone per executed control instruction. */
++    std::unique_ptr<PCStateBase> mispredictScratchPC;
++
+     /** Instruction queue. */
+     InstructionQueue instQueue;
+ 

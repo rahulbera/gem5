@@ -1097,3 +1097,45 @@ five are faster, by +1.38% to +6.73%.
   so the real cost of the vector copy and per-way `std::function` calls was higher than
   modeled.
 - **Binary:** `build/ARM_p2/gem5.fast.t10`, the reference for Trial 11.
+
+### Trial 11 — rename: cheaper `canRename` and a deque for the rename history
+
+**Summary:** two rename-stage changes, bundled because each alone is below the
+run-to-run noise. `canRename` stops copying the instruction pointer and skips register
+classes the instruction writes nothing to. The rename history moves from a `std::list`
+(one heap node per renamed register) to a `std::deque`. Four of five checkpoints are
+faster (+1.6% to +2.8%) with stats bit-identical. **Accepted.**
+
+**Key idea:**
+- **`UnifiedRenameMap::canRename`** took its `DynInstPtr` by value (a reference-count
+  round trip) and asked every register class's free list for its size, even for
+  classes with zero destinations. It now takes a `const DynInstPtr &` and skips any
+  class with `numDestRegs == 0`. Since `0 > n` is false for unsigned `n`, that returns
+  the same answer.
+- **`Rename::historyBuffer`** was a `std::list<RenameHistory>`: one allocation per renamed
+  destination register and one free when it commits or squashes. It is now a
+  `std::deque`, which allocates in 512-byte blocks. Entries only ever enter at the front
+  and leave from either end.
+- **Two loops rewritten, identical order:** `doSquash` and `removeFromHistory` used list
+  iterators in ways a deque does not allow. `removeFromHistory` took `--end()` before
+  checking for empty, and stepped past `begin()` to stop. Both now work from the ends
+  (`front()`/`pop_front()` for squashes, `back()`/`pop_back()` for commits) and process
+  exactly the same entries in the same order.
+
+**Files targeted:** `src/cpu/o3/rename_map.{hh,cc}`, `src/cpu/o3/rename.{hh,cc}`. Built in
+74 s.
+
+| Checkpoint | Paired reference KIPS (T10) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 753.8 | 765.8 | +1.59% | faster | +8.32% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 780.7 | 796.2 | +1.98% | faster (within noise) | +5.33% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 537.2 | 548.4 | +2.09% | faster | +7.89% | 1.92% | yes |
+| 723.llvm_r.1.0 | 405.6 | 417.0 | +2.83% | faster | +8.77% | 0.02% | yes |
+| 753.ns3_r.2.0 | 452.5 | 450.5 | −0.44% | slower (within noise) | +7.56% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference too), and 4/5
+are faster than the paired Trial 10 run.
+- **Drift again:** the T10 binary's reference run here was 2–4% slower than its own
+  candidate run in Trial 10 (for example llvm 405.6 against 422.7). That is why the
+  cumulative column (against the part-2 baseline mean) understates the chained gain.
+- **Binary:** `build/ARM_p2/gem5.fast.t11`, the reference for Trial 12.

@@ -810,3 +810,119 @@ without PGO). Keep `build/ARM/gem5.opt` for debugging (`--debug-flags`, asserts)
   deterministically: a rerun of the v3 binary reproduced its own results exactly.
   Leading suspect: `LoopPredictor::BranchInfo::loopPredUsed`, which is never
   initialized but is read on every prediction.
+
+# Part 2: code-level optimizations
+
+Part 1 changed only how gem5 is built. Part 2 changes the simulator's C++ source,
+one hotspot at a time, under the same rule: a change is accepted only if it leaves every
+stat bit-identical and makes most checkpoints faster. Every trial is logged, accepted or
+not; the patch of every rejected trial is kept in `docs/perf-opt/patches/`.
+
+## Part 2 preamble
+
+### Starting point
+- **Branch:** `feat/opt` at `16558499426048341effe8ea82bdf45bd70f11f1`. The simulator
+  sources are still those of `rbdev` at `8d0dafc`; part 1 changed only docs and
+  `util/perf-opt/`.
+- **Targets:** the ranked list from the call-graph follow-up to the profile, kept
+  outside the repo in `perf-opt-runs/profile/hotspot-deep-dive.md`. Seven read-only
+  investigators (one per subsystem) read the source and the DWARF call-graph profiles
+  of `723.llvm_r.1.0` and `706.stockfish_r.2.4`; an eighth agent de-duplicated their
+  findings, spot-checked the top five and ranked them.
+- **Scope (user instruction, 2026-09-27):** apply every target except those in
+  TAGE-SC-L (`src/cpu/pred/tage*`, the statistical corrector and the loop predictor),
+  which stay untouched. Targets that would change simulation results are out of scope.
+- **Dashboard:** live status of every target, at
+  https://claude.ai/artifact/YCXc8GVLA9iCgXSn6Mbkvz (private to the user).
+
+### Evaluation build
+- **Recipe:** the Trial 4 development recipe (`.fast`, tcmalloc, `ext/` at `-O3`, LTO,
+  bfd), in a new build dir `ARM_p2`:
+
+  ```
+  CCFLAGS_EXTRA='-O3' util/perf-opt/build.sh ARM_p2 fast --with-lto --linker=bfd
+  ```
+
+- **No PGO:** a PGO build would need retraining after every source change, and a stale
+  profile would blur the measurement. PGO is retrained once at the end, for the
+  bulk-run binary.
+- **Binaries are kept:** each accepted candidate is saved as
+  `build/ARM_p2/gem5.fast.t<N>` and becomes the reference binary of the next trial.
+
+### Protocol
+- **Paired runs** (`util/perf-opt/paired_trial.sh`): each trial first reruns the current
+  accepted binary on the test suite (`t<N>-ref`), then runs the candidate (`t<N>`).
+  Both wait for a quiet machine first. Part 1 showed that the same binary can move by
+  up to 4% between runs, and that a verdict could flip depending on which old run was
+  the reference (Trial 5a). Comparing against a fresh run of the reference binary
+  removes drift between trials from the verdict.
+- **Gate (unchanged, per the user):** stats bit-identical to `trial1-fast` on 5/5
+  checkpoints, with no exclusions, **and** at least 3/5 faster than the paired
+  reference run. The reference run is also gated, as a sanity check.
+- **Tests:** these are pure refactors, so the stats gate is the main correctness test.
+  Where gem5 has a unit test for the touched code (for example
+  `src/base/refcnt.test.cc`), it is built and run in a separate `ARM_ut` build dir.
+- **Numbering:** part-2 trials continue part 1's numbering, from Trial 7.
+
+## Part 2 baseline
+
+- **Binary:** `build/ARM_p2/gem5.fast.base`, sha256 `cb947e52f8659c4a…`, built in 317 s
+  with `.text` of 29.85 MB, the same size as Trial 4's bfd binary.
+- **Two runs** (`p2-base-a`, `p2-base-b`) are **bit-identical to `trial1-fast` on all
+  five checkpoints**. They started at load 0.85 and 0.94, after waiting 70 s and 180 s
+  for the machine to settle after the build.
+
+| Checkpoint | KIPS run a | KIPS run b | Part-2 baseline KIPS (mean) | Spread | Trial 4 (bfd rerun) |
+|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 704.0 | 709.9 | 707.0 | 0.83% | 710.4 |
+| 706.stockfish_r.2.4 | 769.9 | 741.9 | 755.9 | 3.70% | 757.5 |
+| 708.sqlite_r.0.3 | 513.1 | 503.4 | 508.3 | 1.92% | 523.5 |
+| 723.llvm_r.1.0 | 383.4 | 383.5 | 383.4 | 0.02% | 380.0 |
+| 753.ns3_r.2.0 | 423.4 | 414.2 | 418.8 | 2.21% | 421.8 |
+
+The spread (0.02–3.70%) is again larger than part 1's two-run figure and in line with
+the same-binary spread found in Trial 4. That is why part 2 compares each candidate with
+a fresh run of its reference.
+
+## Part 2 trials
+
+### Trial 7 — inline the `RefCountingPtr` release fast path
+
+**Summary:** releasing a `RefCountingPtr` was always an out-of-line call, even for a
+null pointer. Inlining the null test and the decrement, and keeping only the `delete`
+out of line, speeds up all five checkpoints by 2.8–6.5% against the paired reference
+run. Stats are bit-identical. **Accepted.**
+
+**Key idea:** `RefCountingPtr::del()` carried `GEM5_NO_INLINE`, added upstream (#2686)
+only to stop GCC's false `-Wuse-after-free` in the refcount unit test. Every
+`DynInstPtr` destructor, assignment and reset therefore called `del()`. The O3 CPU
+releases about 104 mostly-null `DynInstPtr` per simulated cycle, just by clearing its
+inter-stage time buffers. In the profile, 73% of `del()`'s self time was call entry,
+null test and return; the delete path was about 3%.
+
+**Files targeted:** `src/base/refcnt.hh`. `del()` is now an ordinary inline function
+that tests, decrements and calls a new `GEM5_NO_INLINE static destroy(T *)`, which only
+does the `delete`. The false warning cannot return, because GCC still cannot see the
+free next to the decrement.
+
+- **Build:** 128 s (incremental). `.text` grew by 80 KB to 29.93 MB. GCC left 74
+  out-of-line calls to `del<DynInst>`, at sites it judged cold.
+- **Unit test:** `build/ARM_ut/base/refcnt.test.opt`, built with `--linker=mold` as in
+  the upstream report: 8/8 pass, and no `use-after-free` warning in the build log.
+
+| Checkpoint | Paired reference KIPS | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 705.3 | 744.5 | +5.55% | faster | +5.30% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 737.7 | 785.9 | +6.53% | faster | +3.96% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 513.4 | 527.9 | +2.82% | faster | +3.86% | 1.92% | yes |
+| 723.llvm_r.1.0 | 371.1 | 382.8 | +3.15% | faster | −0.15% | 0.02% | yes |
+| 753.ns3_r.2.0 | 431.1 | 444.4 | +3.07% | faster | +6.10% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical to `trial1-fast` on 5/5 (the paired
+reference run is identical too), and all five are faster than the paired reference,
+by +2.82% to +6.53%. This is in line with the deep dive's estimate of 2.5–4%.
+- **Why pairing matters here:** the reference binary is the part-2 baseline binary, yet
+  its paired run measured llvm at 371.1 KIPS against a baseline mean of 383.4 (−3.2%).
+  Against the old baseline mean, llvm would look unchanged (−0.15%). Against the run
+  taken minutes earlier under the same conditions, it is +3.15%.
+- **Binary:** `build/ARM_p2/gem5.fast.t7`, the reference for Trial 8.

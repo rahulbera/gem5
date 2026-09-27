@@ -926,3 +926,42 @@ by +2.82% to +6.53%. This is in line with the deep dive's estimate of 2.5–4%.
   Against the old baseline mean, llvm would look unchanged (−0.15%). Against the run
   taken minutes earlier under the same conditions, it is +3.15%.
 - **Binary:** `build/ARM_p2/gem5.fast.t7`, the reference for Trial 8.
+
+### Trial 8 — zero the time-buffer slots in 64-byte pieces
+
+**Summary:** after Trial 7, the per-cycle reset of the O3 time buffers is dominated by
+`rep stosq`. Zeroing each slot in 64-byte pieces removed half of those instructions, but
+the constructor that follows then compiled to `rep stosq` itself. Stats are
+bit-identical, but only 2 of 5 checkpoints got faster. **Rejected.**
+
+**Key idea:** `TimeBuffer::advance()` destroys the oldest slot, memsets all of it
+(136–848 bytes per buffer; about 1.6 KB per simulated cycle over the five O3 buffers),
+and placement-news a fresh `T`. GCC expands a fixed-size memset of that size into
+`rep stosq`, whose startup cost is large for so few bytes. The profile put `rep stosq`
+at 39% of `CPU::tick`'s self time. A loop of 64-byte `memset`s compiles to plain SSE
+stores instead (checked with g++-12 on a standalone copy).
+
+**Files targeted:** `src/cpu/timebuf.hh` (a new private `zero()` used by `advance()`).
+Patch: `docs/perf-opt/patches/t08-timebuf-chunked-zero.patch`.
+
+- **What the binary showed:** `CPU::tick` went from 10 `rep stosq` to 5. The remaining
+  five are the placement-new constructors. With one whole-slot memset in front of them,
+  GCC had dropped their null stores as redundant. Behind chunked zeroing it kept them,
+  and emitted the 128-byte `DynInstPtr` array as `rep stosq` with an alignment prologue.
+  A mock of `FetchStruct` reproduces this outside gem5.
+
+| Checkpoint | Paired reference KIPS (T7) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 759.5 | 749.1 | −1.37% | slower | +5.96% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 794.2 | 774.0 | −2.55% | slower (within noise) | +2.39% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 544.8 | 535.8 | −1.65% | slower (within noise) | +5.42% | 1.92% | yes |
+| 723.llvm_r.1.0 | 395.5 | 399.5 | +1.02% | faster | +4.20% | 0.02% | yes |
+| 753.ns3_r.2.0 | 458.1 | 462.5 | +0.96% | faster (within noise) | +10.43% | 2.21% | yes |
+
+**Verdict: rejected.** Stats are bit-identical on 5/5, but only 2/5 are faster (−2.55% to
++1.02%).
+- **Lesson:** a code-level change to a memset only moves the `rep stosq` elsewhere,
+  because GCC re-derives memsets from zeroing code. The next trial changes GCC's
+  expansion strategy instead.
+- **Drift:** the T7 binary's paired reference run here measured 2–3% above its own run
+  in Trial 7, which again shows why each trial reruns its reference.

@@ -1,0 +1,36 @@
+diff --git a/src/cpu/timebuf.hh b/src/cpu/timebuf.hh
+index 9810286c05..18b33df798 100644
+--- a/src/cpu/timebuf.hh
++++ b/src/cpu/timebuf.hh
+@@ -185,11 +185,30 @@ class TimeBuffer
+         if (ptr >= (int)size)
+             ptr -= size;
+         (reinterpret_cast<T *>(index[ptr]))->~T();
+-        std::memset(index[ptr], 0, sizeof(T));
++        zero(index[ptr]);
+         new (index[ptr]) T;
+     }
+ 
+   protected:
++    /**
++     * Zero every byte of one entry. A single memset of sizeof(T) bytes
++     * compiles to `rep stosq`, whose startup cost dominates for entries
++     * of a few hundred bytes, and the O3 CPU advances several such
++     * buffers every cycle. Zeroing in 64-byte pieces compiles to plain
++     * vector stores instead.
++     */
++    static void
++    zero(char *entry)
++    {
++        constexpr std::size_t chunk = 64;
++        for (std::size_t i = 0; i + chunk <= sizeof(T); i += chunk)
++            std::memset(entry + i, 0, chunk);
++        if constexpr (sizeof(T) % chunk != 0) {
++            std::memset(entry + sizeof(T) - sizeof(T) % chunk, 0,
++                        sizeof(T) % chunk);
++        }
++    }
++
+     //Calculate the index into this->index for element at position idx
+     //relative to now
+     inline int calculateVectorIndex(int idx) const

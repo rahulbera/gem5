@@ -466,9 +466,16 @@ it reproduces its own different results exactly on a rerun.
 - `ctz`/`clz` of zero is ruled out: gem5's bit helpers guard zero
   (`src/base/bitfield.hh`), and the only raw builtins are in SVE code, which is unused.
 - **Leading suspect:** a read of uninitialized or out-of-bounds memory whose contents
-  depend on generated code. One candidate is already known: the TAGE `BranchInfo`
-  arrays allocated with `new int[...]` and no initialization (`src/cpu/pred/tage_base.hh`,
-  and `tableIndices` in `tage_sc_l.cc`).
+  depend on generated code.
+  - **Confirmed uninitialized read (2026-09-27):** `LoopPredictor::BranchInfo::loopPredUsed`.
+    The constructor does not initialize it (`src/cpu/pred/loop_predictor.hh:150-161`).
+    It is set only when the loop predictor is used (`loop_predictor.cc:298`), yet it is
+    read on every prediction (`tage_sc_l.cc:419`, which sets the provider to LOOP) and
+    in `updateStats` (`loop_predictor.cc:334`). Its value depends on what the allocator
+    left in that heap slot.
+  - The TAGE `BranchInfo` `new int[...]` arrays, first suspected here, are also left
+    uninitialized. A code review during the hotspot follow-up found their reads guarded
+    by `noSkip`. That check is by reading only.
 - **Until this is fixed:** never mix gem5 binaries built with different `-march` in
   one experiment. The kratos2 build keeps the generic x86-64 target.
 
@@ -614,11 +621,13 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
   the same order: `CPU::tick`, `operator new[]`, `IEW::tick`, the DynInst release,
   `generateFetchTargets`, `scheduleReadyInsts`, `updateHistories`, tcmalloc's
   `tc_free_sized`, `calculateIndicesAndTags` and `Fetch::fetch`.
-- **`IEW::executeInsts [.cold]` holds 1.5–2%.** That is a sizeable share for code GCC
-  placed in the cold section. It is not a PGO artifact: the non-PGO Trial 4 binary has
-  an `executeInsts() [clone .cold]` too, since GCC also splits cold paths from static
-  heuristics. What in it is hot was not examined, and whether broader PGO training
-  would move it is untested.
+- **`IEW::executeInsts [.cold]` holds 1.5–2%, a PGO training gap.** PGO moved most of
+  the function into the cold clone. Per `nm -S`, the PGO binary's hot part is 536 B and
+  its `.cold` is 3372 B. In the non-PGO Trial 4 binary they are 2401 B and 59 B, and
+  the 59 B is only exception-handling cleanup. So code the training runs rarely took is
+  hot on the test workloads. Broader training may recover some of this; that is
+  untested. (Corrected 2026-09-27: an earlier edit wrongly called this "not a PGO
+  artifact" because it saw a `.cold` clone in both binaries without comparing sizes.)
 
 ### Self time by subsystem
 
@@ -662,8 +671,8 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
    (BOLT, available in apt as `bolt-18`) is the remaining build-level lever.
 7. **Correctness:** results depend on the host code-generation target (Trial 5b). The
    dependence is deterministic: a v3 binary reproduces its own results exactly. Find
-   and fix the codegen-dependent behavior (suspect: uninitialized TAGE `BranchInfo`
-   arrays) before any further codegen experiments.
+   and fix the codegen-dependent behavior before any further codegen experiments.
+   First fix: initialize `LoopPredictor::BranchInfo::loopPredUsed`, then re-test v3.
 8. **Outside the KIPS metric:** 50–105 s per run go to startup and checkpoint restore
    (Baseline). That matters for bulk throughput, not for KIPS.
 
@@ -799,4 +808,5 @@ without PGO). Keep `build/ARM/gem5.opt` for debugging (`--debug-flags`, asserts)
   scheduling, per-instruction heap churn and TAGE-SC-L; that is part 2's work list.
 - **Open correctness item:** results depend on the codegen target (Trial 5b),
   deterministically: a rerun of the v3 binary reproduced its own results exactly.
-  Suspect the uninitialized TAGE `BranchInfo` arrays.
+  Leading suspect: `LoopPredictor::BranchInfo::loopPredUsed`, which is never
+  initialized but is read on every prediction.

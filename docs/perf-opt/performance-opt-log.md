@@ -1011,3 +1011,47 @@ CCFLAGS_EXTRA="-O3 $MS" LINKFLAGS_EXTRA="$MS" util/perf-opt/build.sh ARM_p2 fast
 - **For the kratos2 recipe:** add the same flag to `CCFLAGS_EXTRA` and `LINKFLAGS_EXTRA`.
   It is a generic x86-64 code-generation option, not tied to the host CPU.
 - **Binary:** `build/ARM_p2/gem5.fast.t8b`, the reference for the next trial.
+
+### Trial 9 — trim the per-cycle IQ and IEW scans
+
+**Summary:** five small changes that each avoid a scan the issue queue or IEW repeats
+every cycle or every dispatched instruction. Stats are bit-identical, but only 2 of 5
+checkpoints got faster (−1.25% to +2.35%). **Rejected.**
+
+**Key idea:** this fork's IQ is split into 9 `IQUnit`s with 9 FU pools, and several
+loops visit all of them, or all 89 ready queues, on every cycle or dispatch. The deep dive
+measured the scans at about 1.5% of region time. Each change gives identical results by
+construction:
+1. `InstructionQueue::isFull(inst)` stops at the first IQ with room, instead of summing
+   free entries over all nine.
+2. Only FU pools that queued a free are processed each cycle. `InstructionQueue` keeps
+   the list, and a pool is on it exactly while its own list of units to free is not
+   empty. `FUPool::takeOverFrom()` is empty, so the list is never cleared except by
+   processing it.
+3. `hasReadyInsts()` returns `!listOrder.empty()`. An op class is on `listOrder` exactly
+   while its ready queue is non-empty: every push adds it, every pop that empties the
+   queue removes it, and `resetState()` clears both.
+4. The resident-ghost counts (always 0 here) are summed as integers and added to the
+   floating-point stat once, which gives the same value as adding them per IQ.
+5. `IssueStruct::insts` is removed. It was never written (only `size` is), so the
+   squash-cleanup loop over it did nothing. `printAvailableInsts()`, whose only call was
+   commented out, went with it.
+
+**Files targeted:** `src/cpu/o3/{inst_queue.hh,inst_queue.cc,fu_pool.hh,iew.hh,iew.cc,comm.hh}`.
+Patch: `docs/perf-opt/patches/t09-iq-iew-scans.patch`. Built in 74 s.
+
+| Checkpoint | Paired reference KIPS (T8b) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 772.6 | 765.6 | −0.90% | slower | +8.30% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 806.0 | 795.9 | −1.25% | slower (within noise) | +5.29% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 554.8 | 559.2 | +0.80% | faster (within noise) | +10.02% | 1.92% | yes |
+| 723.llvm_r.1.0 | 408.0 | 404.3 | −0.90% | slower | +5.44% | 0.02% | yes |
+| 753.ns3_r.2.0 | 457.2 | 467.9 | +2.35% | faster | +11.72% | 2.21% | yes |
+
+**Verdict: rejected.** Stats are bit-identical on 5/5, but only 2/5 are faster than the
+paired Trial 8b run.
+- **Why:** the expected gain (about 1%) is smaller than the run-to-run noise, and none of
+  the five checkpoints moved beyond it. Either the scans are cheaper than the static
+  estimate or the effect is simply unmeasurable with five single runs.
+- **The code changes are sound** and make the scheduler easier to follow. They could
+  be revisited together with other IQ work, where the combined effect would be larger.

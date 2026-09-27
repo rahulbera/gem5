@@ -1,0 +1,257 @@
+diff --git a/src/cpu/o3/comm.hh b/src/cpu/o3/comm.hh
+index d1b0c0d800..b0acc41726 100644
+--- a/src/cpu/o3/comm.hh
++++ b/src/cpu/o3/comm.hh
+@@ -110,11 +110,14 @@ struct IEWStruct
+     SquashReason squashReason[MaxThreads];
+ };
+ 
++/**
++ * Struct that defines the information passed from issue to execute: only
++ * how many instructions issued. The instructions themselves reach execute
++ * through the IQ's instsToExecute list.
++ */
+ struct IssueStruct
+ {
+     int size;
+-
+-    DynInstPtr insts[MaxWidth];
+ };
+ 
+ /** Struct that defines all backwards communication. */
+diff --git a/src/cpu/o3/fu_pool.hh b/src/cpu/o3/fu_pool.hh
+index 45aaf311f2..ba9a4fd480 100644
+--- a/src/cpu/o3/fu_pool.hh
++++ b/src/cpu/o3/fu_pool.hh
+@@ -183,6 +183,9 @@ class FUPool : public SimObject
+     /** Frees all FUs on the list. */
+     void processFreeUnits();
+ 
++    /** Whether any FU is waiting to be freed by processFreeUnits(). */
++    bool hasUnitsToFree() const { return !unitsToBeFreed.empty(); }
++
+     /** Returns the total number of FUs. */
+     int size() { return numFU; }
+ 
+diff --git a/src/cpu/o3/iew.cc b/src/cpu/o3/iew.cc
+index 034810949a..412dadf79f 100644
+--- a/src/cpu/o3/iew.cc
++++ b/src/cpu/o3/iew.cc
+@@ -320,12 +320,6 @@ IEW::clearStates(ThreadID tid)
+         iew_struct.includeSquashInst[tid] = false;
+     }
+ 
+-    // Clear out any of this thread's instructions being sent from
+-    // issue to execute.
+-    for (int i = -issueToExecQueue.getPast();
+-         i <= issueToExecQueue.getFuture(); ++i)
+-        removeCommThreadInsts(tid, issueToExecQueue[i]);
+-
+     // Clear out any of this thread's instructions being sent to prior stages.
+     for (int i = -cpu->timeBuffer.getPast();
+          i <= cpu->timeBuffer.getFuture(); ++i) {
+@@ -1188,28 +1182,6 @@ IEW::dispatchInsts(ThreadID tid)
+     dis_num_inst = 0;
+ }
+ 
+-void
+-IEW::printAvailableInsts()
+-{
+-    int inst = 0;
+-
+-    std::cout << "Available Instructions: ";
+-
+-    while (fromIssue->insts[inst]) {
+-
+-        if (inst%3==0) std::cout << "\n\t";
+-
+-        std::cout << "PC: " << fromIssue->insts[inst]->pcState()
+-             << " TN: " << fromIssue->insts[inst]->threadNumber
+-             << " SN: " << fromIssue->insts[inst]->seqNum << " | ";
+-
+-        inst++;
+-
+-    }
+-
+-    std::cout << "\n";
+-}
+-
+ void
+ IEW::executeInsts()
+ {
+@@ -1220,10 +1192,6 @@ IEW::executeInsts()
+         fetchRedirect[tid] = false;
+     }
+ 
+-    // Uncomment this if you want to see all available instructions.
+-    // @todo This doesn't actually work anymore, we should fix it.
+-//    printAvailableInsts();
+-
+     // Execute/writeback any instructions that are available.
+     int insts_to_execute = fromIssue->size;
+     int inst_num = 0;
+@@ -1580,10 +1548,8 @@ IEW::tick()
+ 
+     sortInsts();
+ 
+-    for (FUPool *fu_pool : fuPools) {
+-        // Free function units marked as being freed this cycle.
+-        fu_pool->processFreeUnits();
+-    }
++    // Free function units marked as being freed this cycle.
++    instQueue.processFreeUnits();
+ 
+     // Check stall and squash signals, dispatch any instructions.
+     for (ThreadID tid : *activeThreads) {
+diff --git a/src/cpu/o3/iew.hh b/src/cpu/o3/iew.hh
+index 9a74ec6cea..7e9db24d71 100644
+--- a/src/cpu/o3/iew.hh
++++ b/src/cpu/o3/iew.hh
+@@ -455,9 +455,6 @@ class IEW
+      */
+     bool wroteToTimeBuffer;
+ 
+-    /** Debug function to print instructions that are issued this cycle. */
+-    void printAvailableInsts();
+-
+   public:
+     /** Instruction queue. */
+     InstructionQueue instQueue;
+diff --git a/src/cpu/o3/inst_queue.cc b/src/cpu/o3/inst_queue.cc
+index 84cd1a0573..139877ba9a 100644
+--- a/src/cpu/o3/inst_queue.cc
++++ b/src/cpu/o3/inst_queue.cc
+@@ -646,7 +646,13 @@ InstructionQueue::isFull(const DynInstPtr &inst)
+     if (inst->isGhost()) {
+         return false;
+     }
+-    return numFreeEntries(inst) == 0;
++    // Same as numFreeEntries(inst) == 0, stopping at the first IQ with room.
++    for (auto iq : iqs) {
++        if (iq->numFreeEntries(inst) > 0) {
++            return false;
++        }
++    }
++    return true;
+ }
+ 
+ std::vector<FUPool *>
+@@ -659,20 +665,32 @@ InstructionQueue::allFUPools()
+     return res;
+ }
+ 
+-bool
+-InstructionQueue::hasReadyInsts()
++void
++InstructionQueue::freeUnitNextCycle(FUPool *fu_pool, int fu_idx)
+ {
+-    if (!listOrder.empty()) {
+-        return true;
++    if (!fu_pool->hasUnitsToFree()) {
++        poolsWithUnitsToFree.push_back(fu_pool);
+     }
++    fu_pool->freeUnitNextCycle(fu_idx);
++}
+ 
+-    for (int i = 0; i < Num_OpClasses; ++i) {
+-        if (!readyInsts[i].empty()) {
+-            return true;
+-        }
++void
++InstructionQueue::processFreeUnits()
++{
++    for (FUPool *fu_pool : poolsWithUnitsToFree) {
++        fu_pool->processFreeUnits();
+     }
++    poolsWithUnitsToFree.clear();
++}
+ 
+-    return false;
++bool
++InstructionQueue::hasReadyInsts()
++{
++    // An op class is on listOrder exactly while its ready queue is not
++    // empty (addIfReady, addReadyMemInst and scheduleReadyInsts keep them
++    // in step, and resetState clears both), so there is no need to scan
++    // every ready queue.
++    return !listOrder.empty();
+ }
+ 
+ IQUnit *
+@@ -870,7 +888,7 @@ InstructionQueue::processFUCompletion(const DynInstPtr &inst, FUPool *fu_pool,
+ 
+     if (fu_pool) {
+         assert(fu_idx > -1);
+-        fu_pool->freeUnitNextCycle(fu_idx);
++        freeUnitNextCycle(fu_pool, fu_idx);
+     }
+ 
+     // @todo: Ensure that these FU Completions happen at the beginning
+@@ -912,8 +930,14 @@ InstructionQueue::scheduleReadyInsts()
+     int total_issued = 0;
+ 
+     // Garfield: integrate freed IQ entry-cycles (resident ghosts this cycle).
++    // Summed as integers first: the count is usually zero, and adding it to
++    // the floating-point stat once gives the same value as adding per IQ.
++    int resident_ghosts = 0;
+     for (auto *iq : iqs) {
+-        ghostStats.ghostIqEntriesAvoided += iq->numResidentGhosts();
++        resident_ghosts += iq->numResidentGhosts();
++    }
++    if (resident_ghosts) {
++        ghostStats.ghostIqEntriesAvoided += resident_ghosts;
+     }
+ 
+     ListOrderIt order_it = listOrder.begin();
+@@ -991,7 +1015,7 @@ InstructionQueue::scheduleReadyInsts()
+                 // Add the FU onto the list of FU's to be freed next
+                 // cycle if we used one.
+                 if (idx >= 0)
+-                    fu_pool->freeUnitNextCycle(idx);
++                    freeUnitNextCycle(fu_pool, idx);
+ 
+                 // CPU has no capable FU for the instruction
+                 // but this may be OK if the instruction gets
+@@ -1018,7 +1042,7 @@ InstructionQueue::scheduleReadyInsts()
+                     execution->setFreeFU();
+                 } else {
+                     // Add the FU onto the list of FU's to be freed next cycle.
+-                    fu_pool->freeUnitNextCycle(idx);
++                    freeUnitNextCycle(fu_pool, idx);
+                 }
+             }
+ 
+diff --git a/src/cpu/o3/inst_queue.hh b/src/cpu/o3/inst_queue.hh
+index caf9daeb04..15305fbdcd 100644
+--- a/src/cpu/o3/inst_queue.hh
++++ b/src/cpu/o3/inst_queue.hh
+@@ -277,6 +277,16 @@ class InstructionQueue
+     /** Returns a vector of FU pools */
+     std::vector<FUPool *> allFUPools();
+ 
++    /**
++     * Mark a functional unit of a pool to be freed at the start of the
++     * next cycle, and remember the pool so that processFreeUnits() visits
++     * only pools that have units to free.
++     */
++    void freeUnitNextCycle(FUPool *fu_pool, int fu_idx);
++
++    /** Free the units marked by freeUnitNextCycle(); once a cycle. */
++    void processFreeUnits();
++
+     /** Returns if there are any ready instructions in the IQ. */
+     bool hasReadyInsts();
+ 
+@@ -403,6 +413,12 @@ class InstructionQueue
+     /** List of Instruction Queues */
+     std::vector<IQUnit *> iqs;
+ 
++    /**
++     * The pools that have units waiting to be freed: a pool is listed
++     * exactly while its own list of units to free is not empty.
++     */
++    std::vector<FUPool *> poolsWithUnitsToFree;
++
+     /** The memory dependence unit, which tracks/predicts memory dependences
+      *  between instructions.
+      */

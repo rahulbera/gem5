@@ -1415,3 +1415,56 @@ are faster than the paired Trial 17 run.
   small hot loops whose BTB sets stay cached, are flat. The deep dive estimated the tag
   mirror alone at +0.4–1.0% on llvm; the combined effect is larger.
 - **Binary:** `build/ARM_p2/gem5.fast.t18`, the current best.
+
+### Trial 19 — build with `MaxWidth = 8`, `MaxThreads = 1`
+
+**Summary:** after Trials 7 and 8b, what is left of `CPU::tick`'s own time is upkeep of
+the inter-stage time buffers, and their size is set by `MaxWidth = 16` and
+`MaxThreads = 4`. This configuration uses at most 8-wide stages and one thread. A build
+with the bounds lowered to 8 and 1 is faster on all five checkpoints (+0.1% to +4.7%),
+but it **changes simulation results**: about 2,000 stats differ on every checkpoint.
+**Rejected.**
+
+**Key idea:** `src/cpu/o3/limits.hh` took the two bounds from build macros
+(`-DGEM5_O3_MAX_WIDTH=8 -DGEM5_O3_MAX_THREADS=1`), defaulting to 16 and 4. Every stage
+checks its width against `MaxWidth` and `fatal()`s if it is exceeded, as does the
+thread count against `MaxThreads`. Every other use of the two constants was checked
+before the trial:
+- **Array bounds:** most uses size per-cycle arrays.
+- **Loops over thread slots:** several loops walk `MaxThreads` slots, including unused
+  ones.
+- **One name:** `LSQUnit::name()` prints `iew.lsq` instead of `iew.lsq.thread0` when
+  `MaxThreads == 1`. That name reaches only debug and trace messages; stats are named
+  `lsq0` by their stat group.
+
+No code path uses either constant as a value that should change a single-thread,
+8-wide simulation. The gate was expected to pass.
+
+**Files and flags targeted:** `src/cpu/o3/limits.hh`, plus the two `-D` flags in
+`CCFLAGS_EXTRA`. Patch: `docs/perf-opt/patches/t19-maxwidth-limits.patch`. Built in
+249 s (full rebuild); `.text` shrank by 18 KB.
+
+| Checkpoint | Paired reference KIPS (T18) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 779.8 | 816.4 | +4.70% | faster | +15.49% | 0.83% | NO |
+| 706.stockfish_r.2.4 | 806.8 | 842.9 | +4.48% | faster | +11.51% | 3.70% | NO |
+| 708.sqlite_r.0.3 | 574.8 | 586.1 | +1.97% | faster | +15.32% | 1.92% | NO |
+| 723.llvm_r.1.0 | 434.7 | 435.2 | +0.10% | faster | +13.50% | 0.02% | NO |
+| 753.ns3_r.2.0 | 480.4 | 500.7 | +4.23% | faster | +19.55% | 2.21% | NO |
+
+Differing stats per checkpoint: 2177, 1958, 2127, 2403, 1910. They include `simTicks`,
+L1D hits and misses, and on two checkpoints `simInsts` and `simOps` (the stop point
+moves by one instruction).
+
+**Verdict: rejected; simulation results change.** The paired reference run (the T18
+binary) is identical to `trial1-fast`, as always.
+- **This is a correctness finding, not a performance one.** For a configuration whose
+  widths and thread count are within both sets of bounds, the two builds should
+  simulate the same machine. They do not, by the same order of magnitude (about 2,000
+  stats) as Trial 5b's `-march=x86-64-v3` build.
+- **The likeliest cause** is the same in both cases: simulated behavior depends on
+  memory whose contents the program never set, and which changes when code generation
+  or object layout changes. The known instance is `LoopPredictor::BranchInfo::loopPredUsed`
+  (Trial 5b), read on every prediction without being initialized. There may be others.
+  Until this is found, **any change to object sizes or memory layout can change
+  results**, and the gate will reject it even when it is correct.

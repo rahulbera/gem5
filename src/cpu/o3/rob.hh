@@ -73,7 +73,7 @@ class ROB
 {
   public:
     typedef std::pair<RegIndex, RegIndex> UnmapInfo;
-    typedef typename std::list<DynInstPtr>::iterator InstIt;
+    typedef typename DynInstList::iterator InstIt;
 
     /** Possible ROB statuses. */
     enum Status
@@ -305,7 +305,7 @@ class ROB
     unsigned maxEntries[MaxThreads];
 
     /** ROB List of Instructions */
-    std::list<DynInstPtr> instList[MaxThreads];
+    DynInstList instList[MaxThreads];
 
     /** Number of instructions that can be squashed in a single cycle.
      * A negative number means all instructions are squashed instantly

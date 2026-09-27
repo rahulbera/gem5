@@ -1552,3 +1552,40 @@ compared with `trial1-fast`.
   - for Trial 5b only, floating-point or other code-generation-dependent arithmetic.
 
   Building with only one of the two bounds lowered would tell which of them matters.
+
+### Trial 21 — pooled nodes for the pipeline's instruction lists
+
+**Summary:** every in-flight instruction sits in several `std::list<DynInstPtr>`: the
+CPU's instruction list, the ROB, the IQ and the memory-dependence unit. Each insertion
+allocated a list node and each removal freed one. A pooling allocator recycles the nodes
+instead. Four of five checkpoints are faster (+2.2% to +3.8%), with stats bit-identical.
+**Accepted.**
+
+**Key idea:** `PooledAllocator<T>` (next to `PooledNew` in `src/base/pooled_new.hh`) is a
+standard allocator that serves single-element allocations, such as list nodes, from a
+per-thread free list. All instances compare equal, so containers splice and swap as with
+`std::allocator`. A new alias, `o3::DynInstList = std::list<DynInstPtr,
+PooledAllocator<DynInstPtr>>`, replaces `std::list<DynInstPtr>` everywhere in the O3
+CPU. Element order, iterator behavior and contents are unchanged; only where nodes come
+from differs. The bundle also makes `CommitCPUStats::updateComCtrlStats` take its
+`StaticInstPtr` by reference, which avoids a reference-count round trip per committed
+control instruction.
+
+**Files targeted:** `src/base/pooled_new.hh`, `src/cpu/o3/{dyn_inst_ptr.hh,dyn_inst.hh,cpu.hh,rob.hh,inst_queue.hh,mem_dep_unit.hh}`,
+`src/cpu/base.{hh,cc}`. Built in 114 s.
+
+| Checkpoint | Paired reference KIPS (T20) | New KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 798.3 | 828.7 | +3.80% | faster | +17.22% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 843.7 | 869.8 | +3.09% | faster (within noise) | +15.07% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 581.1 | 601.7 | +3.55% | faster | +18.38% | 1.92% | yes |
+| 723.llvm_r.1.0 | 447.9 | 446.3 | −0.35% | slower | +16.40% | 0.02% | yes |
+| 753.ns3_r.2.0 | 480.2 | 490.9 | +2.21% | faster (within noise) | +17.20% | 2.21% | yes |
+
+**Verdict: accepted.** Stats are bit-identical on 5/5 (the paired reference too), and 4/5
+are faster than the paired Trial 20 run.
+- **Measurement note:** the reference run started on a machine that had been idle for
+  about 20 minutes (load 0.07). A wait loop in the harness command had hung, since it
+  matched its own command line, so no trial ran in that time. The candidate started at
+  load 0.93, after the usual 60 s wait.
+- **Binary:** `build/ARM_p2/gem5.fast.t21`, the current best.

@@ -42,6 +42,9 @@
 #ifndef __CPU_O3_DYN_INST_PTR_HH__
 #define __CPU_O3_DYN_INST_PTR_HH__
 
+#include <list>
+
+#include "base/pooled_new.hh"
 #include "base/refcnt.hh"
 
 namespace gem5
@@ -54,6 +57,10 @@ class DynInst;
 
 using DynInstPtr = RefCountingPtr<DynInst>;
 using DynInstConstPtr = RefCountingPtr<const DynInst>;
+
+/** The pipeline's lists of in-flight instructions. The allocator recycles
+ *  list nodes, since each instruction enters and leaves several lists. */
+using DynInstList = std::list<DynInstPtr, PooledAllocator<DynInstPtr>>;
 
 } // namespace o3
 } // namespace gem5

@@ -890,7 +890,7 @@ class BaseCPU : public ClockedObject
         /* Number of function calls and returns committed */
         statistics::Scalar numCallsReturns;
 
-        void updateComCtrlStats(const StaticInstPtr staticInst);
+        void updateComCtrlStats(const StaticInstPtr &staticInst);
 
     };
 

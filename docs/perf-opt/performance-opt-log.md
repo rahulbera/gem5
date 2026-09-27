@@ -1755,3 +1755,72 @@ wait. All three are bit-identical to `trial1-fast`.
 - **Smaller items:** a ROB ring buffer, FDP ring buffers, a dense TLB side array, the
   remaining LSQ request allocations, in-place `DynInst` PCs, the ARM misc-register read
   fast path, commit-loop cleanups.
+
+## Overall result: parts 1 and 2, local
+
+The original campaign baseline (`build/ARM/gem5.opt`, the same binary as `baseline-a`,
+sha256 `4a08fbe77e4560d8…`), the final development build and the final PGO build were
+run back to back on the test suite, each after the quiet-machine wait (runs
+`overall-opt`, `overall-dev`, `overall-pgo`).
+- **Final development build:** `build/ARM_p2/gem5.fast.lpfix`, the part-2 code with the
+  `loopPredUsed` fix and the part-2 recipe.
+- **Final PGO build:** `build/ARM_p2pgo/gem5.fast.pgo`.
+
+| Checkpoint | Original `.opt` KIPS | Final development KIPS | Speedup | Final PGO KIPS | Speedup |
+|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 512.9 | 780.9 | 1.52× | 937.8 | 1.83× |
+| 706.stockfish_r.2.4 | 532.7 | 809.5 | 1.52× | 988.4 | 1.86× |
+| 708.sqlite_r.0.3 | 371.9 | 569.6 | 1.53× | 658.7 | 1.77× |
+| 723.llvm_r.1.0 | 269.3 | 435.4 | 1.62× | 508.2 | 1.89× |
+| 753.ns3_r.2.0 | 300.7 | 475.5 | 1.58× | 541.9 | 1.80× |
+| **Geomean** | | | **1.55×** | | **1.83×** |
+
+- **Stats:** both final builds match the original `.opt` run on every stat except
+  `numMiscRegReads`, the counter that `.opt`'s asserts inflate (Trial 1). They are
+  bit-identical to `trial1-fast`.
+- **Where it comes from, for the development build:** about +35–39% from part 1's build
+  levers and +17% from part 2's code changes and memset flag. PGO adds another +17.6%
+  for bulk runs (1.828 / 1.554). The stage figures were measured in different sessions,
+  so they do not multiply exactly to the 1.55× measured here.
+
+## Cluster port of part 2 (kratos2)
+
+**Setup:** `feat/opt` was pushed over ssh to the cluster clone (`/home/rahbera/agentic-cpu/gem5`,
+not to GitHub) and checked out there, at `3f86388d`. Both binaries were built on the login
+node (g++-12 12.1.0) with `slurm/build-p2.sh`, which encodes the part-2 recipe: LTO +
+bfd, tcmalloc, the memset-strategy flag, and `-Wl,-rpath,/home/rahbera/agentic-cpu/lib`.
+Part 1's binaries were kept for comparison: `build/ARM_rel` (development) and
+`build/ARM_pgo` (bulk).
+- **Development build:** `build/ARM_rel2/gem5.fast`, 790 s. It has no `rep stosq` in
+  `CPU::tick`, and its RUNPATH ends with the NFS library directory.
+- **PGO bulk-run build:** `build/ARM_pgo2/gem5.fast`.
+  - Instrumented build: 1186 s.
+  - Training: one 3-CPU job on kratos15 over the same three agentic checkpoints as part 1
+    (`gson-1093/cpt.2`, `ripgrep-2209/cpt.3`, `jq-2598/cpt.2`), 10M + 30M each. It took
+    35 min and wrote 2052 `.gcda` files.
+  - Optimized build: 614 s, with no profile-mismatch warnings and no gcov symbols.
+
+**Measurement fix:** the first development comparison put both runs on CPUs 18 and 50 of
+kratos17. By the usual numbering on a two-socket, 64-CPU node these are the two
+hyperthreads of one core (inferred, not read from the topology), and this happened
+despite `--hint=nomultithread`. That run measured 89.0 against 94.5 KIPS on llvm.
+`slurm/compare-two.sbatch` now asks for 4 CPUs and pins the two runs to CPUs on different
+physical cores, read from `/sys/devices/system/cpu/cpuN/topology`. It prints the cores it
+used. All numbers below are from separate cores.
+
+| Comparison (same node, separate cores) | Checkpoint | Old KIPS | New KIPS | Change | Stats |
+|---|---|---|---|---|---|
+| Development: part-1 `ARM_rel` vs part-2 `ARM_rel2` (kratos17) | SPEC `723.llvm_r.1.0` | 149.6 | 171.7 | **+14.8%** | bit-identical, and identical to local `trial1-fast` |
+| | agentic `gin-2121/cpt.0` | 113.0 | 128.0 | **+13.3%** | bit-identical |
+| Bulk: part-1 `ARM_pgo` vs part-2 `ARM_pgo2` (kratos15) | SPEC `723.llvm_r.1.0` | 179.7 | 209.9 | **+16.8%** | bit-identical, and identical to local `trial1-fast` |
+| | agentic `gin-2121/cpt.0` | 132.5 | 154.6 | **+16.7%** | bit-identical, and identical to part 1's cluster PGO run |
+
+- **Part 2 on the cluster:** +13–15% for development builds and +17% for bulk-run builds,
+  against part 1's cluster binaries. That is in line with the local +16–17% on these
+  two checkpoints.
+- **Binaries on kratos2:**
+  - Bulk runs: `build/ARM_pgo2/gem5.fast` (agentic-trained PGO).
+  - Development: `build/ARM_rel2/gem5.fast`.
+  - Debugging: `build/ARM/gem5.opt` (old `rbdev` build).
+  - Slurm scripts that still name `build/ARM/gem5.opt` (`restore-one.sbatch`) should
+    point at `ARM_pgo2` for bulk runs.

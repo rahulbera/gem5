@@ -1589,3 +1589,33 @@ are faster than the paired Trial 20 run.
   matched its own command line, so no trial ran in that time. The candidate started at
   load 0.93, after the usual 60 s wait.
 - **Binary:** `build/ARM_p2/gem5.fast.t21`, the current best.
+
+### Fix — initialize `LoopPredictor::BranchInfo::loopPredUsed` (user approved)
+
+**Summary:** the loop predictor's `BranchInfo` constructor initialized every member except
+`loopPredUsed`, which is only ever set to `true` (when the loop predictor overrides
+TAGE, `loop_predictor.cc:298`) and is read on every prediction. It now starts as `false`.
+This is a correctness fix, not an optimization, approved by the user although it is
+inside TAGE-SC-L.
+
+**What the flag drives:** `tage_sc_l.cc:419` (provider relabelled as LOOP),
+`LoopPredictor::updateStats` (`loop_predictor.used/correct/wrong`) and `ltage.cc:99`. The
+diagnostics above showed that garbage in it changes these branch-predictor statistics
+(on llvm, `loop_predictor.used` went from 0 to 228,618 under `MALLOC_PERTURB_`) but not
+timing.
+
+**Files targeted:** `src/cpu/pred/loop_predictor.hh`. `makeBranchInfo()` (`new BranchInfo()`)
+is the only place a `BranchInfo` is created, and nothing derives from it.
+
+**Verification:**
+
+| Run | Result vs `trial1-fast` |
+|---|---|
+| Fixed build, part-2 recipe (tcmalloc), run `lpfix` | bit-identical on 5/5 |
+| Fixed build, glibc malloc with `MALLOC_PERTURB_=165`, run `lpfix-perturb` | bit-identical on 5/5 (the unfixed build differed in 52–55 stats) |
+
+- **No baseline changes:** with tcmalloc the uninitialized byte happened to read as 0, so
+  no existing result changes, and every part-2 trial stays valid.
+- **The dependence is gone:** with the heap deliberately filled with garbage, the stats
+  are now stable.
+

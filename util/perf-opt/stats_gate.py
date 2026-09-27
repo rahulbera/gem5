@@ -82,11 +82,19 @@ def trial_checkpoints(trial_dir):
 def gate(base_dir, cand_dir, exclude):
     """Print a per-checkpoint verdict; return True iff all identical."""
     ok = True
-    base_ids = trial_checkpoints(base_dir)
+    base_ids = set(trial_checkpoints(base_dir))
     cand_ids = set(trial_checkpoints(cand_dir))
-    for cid in base_ids:
+    if not base_ids:
+        # A mistyped or empty baseline must not read as "all identical".
+        print(f"NO BASELINE STATS in {base_dir}")
+        return False
+    for cid in sorted(base_ids | cand_ids):
         if cid not in cand_ids:
             print(f"{cid}: NO STATS in candidate")
+            ok = False
+            continue
+        if cid not in base_ids:
+            print(f"{cid}: NO STATS in baseline")
             ok = False
             continue
         bad = diff(

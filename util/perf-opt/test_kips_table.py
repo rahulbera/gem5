@@ -84,6 +84,29 @@ class RowsTest(unittest.TestCase):
         self.assertAlmostEqual(r["vs_base_pct"], 100 * (110 / 101 - 1))
 
 
+class PartialTrialTest(unittest.TestCase):
+    def test_missing_checkpoint_is_listed_and_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ids = {f"c{i}": (100000, 500) for i in range(5)}
+            a = make_trial(tmp, "base-a", ids)
+            b = make_trial(tmp, "base-b", ids)
+            # A trial where only 3 of the 5 checkpoints produced stats, all
+            # faster and identical: it must not pass as "3/3".
+            t = make_trial(tmp, "partial",
+                           {f"c{i}": (120000, 500) for i in range(3)})
+            table = kips_table.rows(t, [a, b], [a, b])
+            self.assertEqual([r["cid"] for r in table],
+                             ["c0", "c1", "c2", "c3", "c4"])
+            missing = [r for r in table if r["new"] is None]
+            self.assertEqual(len(missing), 2)
+            self.assertTrue(all(r["direction"] == "MISSING" and
+                                not r["identical"] for r in missing))
+            ok, reason = kips_table.verdict(table)
+            self.assertFalse(ok)
+            self.assertIn("missing on 2/5", reason)
+            self.assertIn("| c3 | 100.0 | — |", kips_table.markdown(table))
+
+
 def row(faster, identical=True):
     return {"cid": "x", "new": 2.0 if faster else 0.5, "prev": 1.0,
             "identical": identical}

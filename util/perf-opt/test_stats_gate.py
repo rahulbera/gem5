@@ -120,5 +120,35 @@ class TrialCheckpointsTest(unittest.TestCase):
             )
 
 
+class GateTest(unittest.TestCase):
+    def make(self, root, name, ids):
+        d = Path(root) / name
+        for cid in ids:
+            (d / cid).mkdir(parents=True)
+            (d / cid / "stats.txt").write_text(BASE)
+        return d
+
+    def test_missing_or_empty_base_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cand = self.make(tmp, "cand", ["a.0.1"])
+            self.assertFalse(stats_gate.gate(Path(tmp) / "typo", cand,
+                                             frozenset()))
+            (Path(tmp) / "empty").mkdir()
+            self.assertFalse(stats_gate.gate(Path(tmp) / "empty", cand,
+                                             frozenset()))
+
+    def test_checkpoint_only_in_candidate_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = self.make(tmp, "base", ["a.0.1"])
+            cand = self.make(tmp, "cand", ["a.0.1", "b.0.2"])
+            self.assertFalse(stats_gate.gate(base, cand, frozenset()))
+
+    def test_matching_trials_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = self.make(tmp, "base", ["a.0.1", "b.0.2"])
+            cand = self.make(tmp, "cand", ["a.0.1", "b.0.2"])
+            self.assertTrue(stats_gate.gate(base, cand, frozenset()))
+
+
 if __name__ == "__main__":
     unittest.main()

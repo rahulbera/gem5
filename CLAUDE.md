@@ -93,8 +93,11 @@ CCFLAGS_EXTRA="-O3 $MS -fprofile-use -fprofile-partial-training -Wno-missing-pro
   "Diagnostics" in the log). Keep the generic x86-64 target.
 - **Fast relinks:** while iterating, `--linker=mold` relinks in about 80 s, with the same stats
   and slightly larger `.text`.
-- **kratos2:** build on the login node with the cluster-local script
-  `/home/rahbera/agentic-cpu/slurm/build-p2.sh <dir> <logname> [extra CCFLAGS] [extra LINKFLAGS]`.
+- **kratos2:** build on the login node with
+  `build-p2.sh <dir> <logname> [extra CCFLAGS] [extra LINKFLAGS]`. It is versioned in the
+  gem5-infra repo as `scripts/build-p2.sh`, together with the Slurm run scripts
+  (`restore-one`, `compare-two`, `pgo-train`) and their README, and the working copy is in
+  `/home/rahbera/agentic-cpu/slurm/` on kratos2.
   It uses the same recipe plus an rpath to `/home/rahbera/agentic-cpu/lib`, where copies of
   tcmalloc and protobuf live for compute nodes that lack them. Current binaries there are
   `build/ARM_rel2` (development) and `build/ARM_pgo2` (PGO trained on agentic checkpoints, for

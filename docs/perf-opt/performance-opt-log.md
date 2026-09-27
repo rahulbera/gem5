@@ -1619,3 +1619,139 @@ is the only place a `BranchInfo` is created, and nothing derives from it.
 - **The dependence is gone:** with the heap deliberately filled with garbage, the stats
   are now stable.
 
+### PGO retrained on the part-2 code
+
+**Summary:** the campaign stopped after Trial 21 (user decision). PGO was then retrained
+on the final part-2 sources with the part-2 recipe. On top of Trial 21 it is faster on
+all five checkpoints, by +11.2% to +19.3%, with stats bit-identical. As in part 1, PGO is
+for bulk-run binaries only (user decision, 2026-09-27).
+
+**Recipe:** the Trial 6 procedure, with the part-2 flags, in its own build dir `ARM_p2pgo`:
+1. **Instrumented build:** 422 s; 751 MB binary, 74.4 MB `.text`.
+
+   ```
+   MS='-mmemset-strategy=vector_loop:2048:noalign,libcall:-1:noalign'
+   CCFLAGS_EXTRA="-O3 $MS -fprofile-generate" LINKFLAGS_EXTRA="$MS -fprofile-generate" \
+       util/perf-opt/build.sh ARM_p2pgo fast --with-lto --linker=bfd
+   ```
+
+2. **Training:** `run_suite.sh build/ARM_p2pgo/gem5.fast p2-pgo-train train`, on the same
+   three SPEC training checkpoints as Trial 6 (never used for evaluation). It wrote 2034
+   `.gcda` files. Instrumented speed: gcc 199.2, flightdm 253.5, nest 423.9 KIPS.
+3. **Optimized build:** 255 s. No profile-mismatch warnings and no gcov symbols. 73.3 MB
+   binary, 34.95 MB `.text`.
+
+   ```
+   CCFLAGS_EXTRA="-O3 $MS -fprofile-use -fprofile-partial-training -Wno-missing-profile" \
+       LINKFLAGS_EXTRA="$MS -fprofile-use -fprofile-partial-training" \
+       util/perf-opt/build.sh ARM_p2pgo fast --with-lto --linker=bfd
+   ```
+
+| Checkpoint | Paired reference KIPS (T21) | PGO KIPS | Change | Direction | Cumulative vs part-2 baseline | Baseline noise | Stats identical |
+|---|---|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 789.5 | 931.2 | +17.94% | faster | +31.71% | 0.83% | yes |
+| 706.stockfish_r.2.4 | 811.9 | 968.6 | +19.31% | faster | +28.14% | 3.70% | yes |
+| 708.sqlite_r.0.3 | 571.3 | 659.5 | +15.43% | faster | +29.75% | 1.92% | yes |
+| 723.llvm_r.1.0 | 426.1 | 489.2 | +14.81% | faster | +27.60% | 0.02% | yes |
+| 753.ns3_r.2.0 | 484.6 | 538.7 | +11.17% | faster | +28.64% | 2.21% | yes |
+
+- **Larger than in part 1** (+8.1% to +11.3% on the Trial 4 code). Not investigated. A
+  plausible reason: the part-2 changes made hot paths inlinable (for example the
+  `RefCountingPtr` release and the BTB probe), which gives profile-driven inlining and
+  layout more to work with.
+- **Binary:** `build/ARM_p2pgo/gem5.fast.pgo` (local, SPEC-trained). The bulk-run binary
+  on kratos2 must be retrained there: profiles are tied to the compiler (g++ 12.1 on the
+  cluster), and bulk runs are agentic.
+
+## Part 2 summary
+
+The campaign stopped after Trial 21, at the user's decision. The remaining targets were
+each estimated below 1%, under the per-trial noise floor. PGO was then retrained on the
+final code, and the `loopPredUsed` fix was applied.
+
+| Trial | Change | Verdict | Paired effect (faster / 5) |
+|---|---|---|---|
+| 7 | Inline the `RefCountingPtr` release fast path | accepted | +2.8 … +6.5% (5/5) |
+| 8 | Chunked time-buffer zeroing | rejected: not faster | −2.6 … +1.0% (2/5) |
+| 8b | `-mmemset-strategy=vector_loop:2048:noalign,libcall:-1:noalign` | accepted | −1.8 … +4.1% (4/5) |
+| 9 | Trim per-cycle IQ/IEW scans | rejected: not faster | −1.3 … +2.4% (2/5) |
+| 10 | Allocation-free BTB search | accepted | +1.4 … +6.7% (5/5) |
+| 11 | Rename: `canRename` + history deque | accepted | −0.4 … +2.8% (4/5) |
+| 12 | `DynInst` allocations (`instResult`, scratch PC) | rejected: not faster | −2.0 … +0.8% (2/5) |
+| 13 | Set-associative lookups without copying | accepted, narrowly | −2.1 … +2.7% (3/5) |
+| 14 | LSQ: reference accessors, `make_shared`, hoisted scan | accepted | +0.7 … +5.5% (5/5) |
+| 15 | Reuse the hit block in the prefetcher probe | rejected: not faster | −2.3 … +2.1% (1/5) |
+| 16 | `-fno-plt` | rejected: no effect | −1.0 … +0.8% (2/5) |
+| 17 | BTB window search in one call | accepted (noisy) | −1.7 … +4.8% (4/5) |
+| 18 | FTQ refcounts, next-PC scratch, BTB tag mirror | accepted | −0.6 … +5.6% (4/5) |
+| 19 | `MaxWidth = 8`, `MaxThreads = 1` build | rejected: **changes results** | +0.1 … +4.7% (5/5), ~2,000 stats differ |
+| 20 | `PooledNew` for per-instruction objects | accepted, narrowly | −3.2 … +5.4% (3/5) |
+| 21 | Pooled nodes for the instruction lists | accepted | −0.4 … +3.8% (4/5) |
+| fix | Initialize `loopPredUsed` | applied (correctness) | results unchanged |
+| PGO | PGO retrained on the part-2 code (SPEC-trained) | bulk runs only | +11.2 … +19.3% (5/5) |
+
+**End-to-end result.** The part-2 baseline binary, the final development binary (Trial 21
+plus the fix) and the PGO binary were run back to back, each after the quiet-machine
+wait. All three are bit-identical to `trial1-fast`.
+
+| Checkpoint | Part-2 baseline KIPS | Final development KIPS | Change | Final PGO KIPS | Change |
+|---|---|---|---|---|---|
+| 706.stockfish_r.1.1 | 689.6 | 818.2 | +18.7% | 957.5 | +38.8% |
+| 706.stockfish_r.2.4 | 723.2 | 859.0 | +18.8% | 1023.7 | +41.6% |
+| 708.sqlite_r.0.3 | 515.3 | 603.0 | +17.0% | 676.3 | +31.2% |
+| 723.llvm_r.1.0 | 383.2 | 445.3 | +16.2% | 514.7 | +34.3% |
+| 753.ns3_r.2.0 | 425.4 | 491.8 | +15.6% | 569.5 | +33.9% |
+| **Geomean** | | | **+17.3%** | | **+35.9%** |
+
+- **Part 2 total:** the code changes make the development build **17.3% faster** (15.6–18.8%
+  per checkpoint) than the Trial 4 recipe. With PGO, the bulk-run build is **35.9%
+  faster** (31.2–41.6%).
+- **Against part 1's baseline:** the part-1 `.opt` runs measured 280.6–545.1 KIPS. The
+  final PGO binary runs 514.7–1023.7, about 1.8× on every checkpoint. This compares runs
+  made hours apart, so it is approximate.
+- **Chaining overstates.** Multiplying each accepted trial's paired gain gives +22.7%, but
+  the direct measurement is +17.3%. A trial passes partly when noise favors it, so the
+  accepted gains are biased upward. The direct back-to-back comparison is the number to
+  quote.
+
+**What worked:**
+- Removing out-of-line calls on the hottest paths: `RefCountingPtr::del`, and the
+  per-address virtual BTB calls.
+- Atomic `shared_ptr` reference-count traffic, which the deep dive had not modeled (LSQ
+  requests, fetch targets).
+- `rep stosq` for small memsets, fixed with a build flag.
+- Memory touched per BTB probe (the tag mirror).
+- Allocation pooling, where many small pools add up (Trials 20 and 21).
+
+**What did not:**
+- Changes worth under about 1%: IQ scans, the prefetcher probe hint, `-fno-plt`, a few
+  allocations per instruction. They are below what five single runs can resolve.
+
+**Protocol lessons:**
+- The same binary varies by 2–4% between runs, and machine state drifts over hours. Pair
+  every candidate with a fresh run of its reference.
+- Quote end-to-end numbers from one back-to-back comparison, not from chained trial
+  gains.
+- Bundle related small changes, so the effect is large enough to measure.
+
+**Correctness:**
+- **Open:** builds that change code generation (Trial 5b) or the O3 width and thread
+  bounds (Trial 19) change timing results. The diagnostics rule out uninitialized stack
+  reads and heap placement.
+- **Fixed:** the uninitialized `loopPredUsed` read was real. It affected only
+  branch-predictor statistics, and is now fixed.
+
+**Build recipes (local, g++-12):**
+- **Development:** `CCFLAGS_EXTRA="-O3 $MS" LINKFLAGS_EXTRA="$MS" ... --with-lto --linker=bfd`,
+  with `MS` the memset-strategy flag above.
+- **Bulk runs:** the same plus PGO (see "PGO retrained on the part-2 code").
+- **kratos2:** the cluster needs the same flags, and PGO retrained on its own compiler
+  with agentic checkpoints.
+
+**Left for later (not attempted):**
+- **The ARM MMU translation path:** about 5% of time after part 2, the largest non-TAGE
+  block, mostly fetch-directed-prefetch translations.
+- **TAGE-SC-L:** about 11%, excluded by the user.
+- **Smaller items:** a ROB ring buffer, FDP ring buffers, a dense TLB side array, the
+  remaining LSQ request allocations, in-place `DynInst` PCs, the ARM misc-register read
+  fast path, commit-loop cleanups.

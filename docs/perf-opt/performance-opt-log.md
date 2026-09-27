@@ -467,7 +467,8 @@ it reproduces its own different results exactly on a rerun.
   (`src/base/bitfield.hh`), and the only raw builtins are in SVE code, which is unused.
 - **Leading suspect:** a read of uninitialized or out-of-bounds memory whose contents
   depend on generated code.
-  - **Confirmed uninitialized read (2026-09-27):** `LoopPredictor::BranchInfo::loopPredUsed`.
+  - **Confirmed uninitialized read (2026-09-27), but not the cause of the timing
+    change (see the part-2 "Diagnostics" section):** `LoopPredictor::BranchInfo::loopPredUsed`.
     The constructor does not initialize it (`src/cpu/pred/loop_predictor.hh:150-161`).
     It is set only when the loop predictor is used (`loop_predictor.cc:298`), yet it is
     read on every prediction (`tage_sc_l.cc:419`, which sets the provider to LOOP) and
@@ -672,7 +673,9 @@ The profile is flat. The hottest function is about 6.5%, and the region touches 
 7. **Correctness:** results depend on the host code-generation target (Trial 5b). The
    dependence is deterministic: a v3 binary reproduces its own results exactly. Find
    and fix the codegen-dependent behavior before any further codegen experiments.
-   First fix: initialize `LoopPredictor::BranchInfo::loopPredUsed`, then re-test v3.
+   `LoopPredictor::BranchInfo::loopPredUsed` is uninitialized and should be fixed,
+   but the part-2 diagnostics show it affects only branch-predictor statistics, not
+   timing, so the cause of the timing change is still open (see "Diagnostics").
 8. **Outside the KIPS metric:** 50–105 s per run go to startup and checkpoint restore
    (Baseline). That matters for bulk throughput, not for KIPS.
 
@@ -808,8 +811,9 @@ without PGO). Keep `build/ARM/gem5.opt` for debugging (`--debug-flags`, asserts)
   scheduling, per-instruction heap churn and TAGE-SC-L; that is part 2's work list.
 - **Open correctness item:** results depend on the codegen target (Trial 5b),
   deterministically: a rerun of the v3 binary reproduced its own results exactly.
-  Leading suspect: `LoopPredictor::BranchInfo::loopPredUsed`, which is never
-  initialized but is read on every prediction.
+  `LoopPredictor::BranchInfo::loopPredUsed` is read uninitialized, but it changes
+  only branch-predictor statistics, not timing; the cause is still open (see the
+  part-2 "Diagnostics" section).
 
 # Part 2: code-level optimizations
 
@@ -1508,3 +1512,43 @@ larger than the effect, so this is a small gain measured with a lot of noise.
   Trials 12 and 14. So the layout-dependent behavior of Trials 5b and 19 does not follow
   heap allocation in general.
 - **Binary:** `build/ARM_p2/gem5.fast.t20`, the current best.
+
+### Diagnostics — why do Trials 5b and 19 change results?
+
+These are not optimization trials. Each tests one hypothesis for the result changes of
+Trial 5b (`-march=x86-64-v3`) and Trial 19 (`MaxWidth = 8`, `MaxThreads = 1`), using
+compiler or allocator settings only; no source was changed for them. Each was built in
+its own build directory from the Trial 20 sources, run once on the test suite, and
+compared with `trial1-fast`.
+
+| Diagnostic | What it changes | Result vs `trial1-fast` |
+|---|---|---|
+| `-ftrivial-auto-var-init=pattern` (build dir `ARM_diag`) | every uninitialized stack variable starts as a fixed garbage pattern | bit-identical on 5/5 |
+| glibc malloc instead of tcmalloc (`--without-tcmalloc`, `ARM_diag2`) | heap allocator and heap layout | bit-identical on 5/5 |
+| glibc malloc with `MALLOC_PERTURB_=165` | every new heap allocation starts filled with a garbage byte | 52–55 stats differ per checkpoint, all branch-predictor bookkeeping |
+
+**What this shows:**
+- **No uninitialized stack read matters:** filling every automatic variable with a
+  pattern changes nothing.
+- **Heap placement does not matter:** a different allocator (glibc), and pooling in
+  Trial 20, keep results identical.
+- **The uninitialized heap read is confirmed and is in the loop predictor.** Under
+  `MALLOC_PERTURB_`, `loop_predictor.used` goes from 0 to 228,618 on llvm (and from
+  2,646 to 102,856 on stockfish), and the TAGE provider counters (`longestMatchProvider`,
+  `altMatchProvider`, …) shift. That is `LoopPredictor::BranchInfo::loopPredUsed` read
+  uninitialized: garbage makes it look "used", which relabels the provider as LOOP
+  (`tage_sc_l.cc:419`). With tcmalloc or unperturbed glibc the garbage happens to be 0.
+- **But that read does not change timing.** `simTicks`, instruction counts and every
+  cache and pipeline stat stay identical under `MALLOC_PERTURB_`. So `loopPredUsed` is a
+  real bug in the loop predictor's statistics, but **not** the cause of the ~2,000-stat
+  timing changes in Trials 5b and 19.
+- **Still unexplained:** what makes Trial 19's width and thread bounds, and Trial 5b's
+  code generation, change timing. Remaining candidates:
+  - behavior that depends on the relative order of object addresses, such as iteration
+    over containers keyed by pointer (address randomization shifts all addresses
+    together and keeps their order);
+  - a real semantic dependence on `MaxWidth` or `MaxThreads` that the code audit
+    missed;
+  - for Trial 5b only, floating-point or other code-generation-dependent arithmetic.
+
+  Building with only one of the two bounds lowered would tell which of them matters.

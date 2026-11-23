@@ -602,6 +602,65 @@ class BOPPrefetcher(QueuedPrefetcher):
     on_inst = False
 
 
+class PythiaPrefetcher(QueuedPrefetcher):
+    # Paper: https://arxiv.org/abs/2109.12021
+    # Defaults: the configuration of the authors' DPC4 ChampSim module.
+    type = "PythiaPrefetcher"
+    cxx_class = "gem5::prefetch::Pythia"
+    cxx_header = "mem/cache/prefetch/pythia.hh"
+
+    # A demand for a prefetched block is what rewards the agent, and a
+    # timely prefetch makes that demand a hit, so hits must be observed.
+    prefetch_on_access = True
+    on_inst = False
+    on_write = False
+
+    alpha = Param.Float(0.006508802942367162, "Learning rate")
+    gamma = Param.Float(0.556300959940946, "Discount factor")
+    epsilon = Param.Float(
+        0.0018228444309622588, "Probability of a random action"
+    )
+    seed = Param.UInt32(200, "Seed of the exploration random numbers")
+    actions = VectorParam.Int(
+        [1, 3, 4, 5, 10, 11, 12, 22, 23, 30, 32, -1, -3, -6, 0],
+        "Block deltas the agent chooses from; 0 means no prefetch",
+    )
+
+    page_table_size = Param.Unsigned(64, "Pages whose access history is kept")
+    tracker_size = Param.Unsigned(
+        256, "Actions kept until they are rewarded and trained on"
+    )
+    recent_deltas_size = Param.Unsigned(
+        2, "Prefetched deltas remembered per page to choose the degree"
+    )
+
+    reward_correct_timely = Param.Int(
+        20, "Reward: the block was demanded after it was filled"
+    )
+    reward_correct_untimely = Param.Int(
+        12, "Reward: the block was demanded before it was filled"
+    )
+    reward_incorrect = Param.Int(-8, "Reward: the block was not demanded")
+    reward_no_prefetch = Param.Int(-4, "Reward: the action was no prefetch")
+    reward_out_of_page = Param.Int(
+        -12, "Reward: the delta pointed outside the page"
+    )
+
+    degree_thresholds = VectorParam.Int(
+        [1, 3, 8],
+        "Ascending confidence limits: degrees[i] applies while the "
+        "confidence of the chosen delta on the page is at most entry i",
+    )
+    degrees = VectorParam.Unsigned(
+        [1, 2, 4, 6],
+        "Prefetch degree per confidence range, one entry more than "
+        "degree_thresholds",
+    )
+
+    num_tilings = Param.Unsigned(3, "Tilings of each feature's Q-table")
+    num_tiles = Param.Unsigned(128, "Tiles per tiling")
+
+
 class SmsPrefetcher(QueuedPrefetcher):
     # Paper: https://web.eecs.umich.edu/~twenisch/papers/isca06.pdf
     type = "SmsPrefetcher"
